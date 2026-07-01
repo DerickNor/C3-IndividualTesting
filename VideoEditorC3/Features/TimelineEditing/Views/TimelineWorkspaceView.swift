@@ -169,7 +169,7 @@ struct TimelineWorkspaceView: View {
                     .coordinateSpace(name: "TimelineScroll")
                     .onPreferenceChange(ScrollOffsetPreferenceKey.self) { minX in
                         let offset = halfWidth - minX
-                        let time = max(0, offset / pointsPerSecond)
+                        let time = min(max(0, offset / pointsPerSecond), viewModel.timeline.totalDuration)
                         if !viewModel.isPlaying {
                             viewModel.currentTime = time
                         }

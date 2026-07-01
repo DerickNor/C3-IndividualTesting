@@ -107,7 +107,10 @@ struct ProjectListView: View {
                 }
             }
             .navigationDestination(for: VideoProject.self) { project in
-                TimelineEditorView(project: project)
+                TimelineEditorView(project: project) { updatedProject in
+                    viewModel.updateProject(updatedProject)
+                }
+                .id(project.id)
             }
         }
     }

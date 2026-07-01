@@ -1,24 +1,30 @@
- import Foundation
+import Foundation
 import Observation
 
 @Observable
 final class ProjectListViewModel {
     var projects: [VideoProject] = []
     
+    private let saveURL: URL = {
+        let paths = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)
+        return paths[0].appendingPathComponent("projects.json")
+    }()
+    
     init() {
-        loadMockProjects()
+        loadProjects()
     }
     
     func createNewProject(title: String, canvasSize: CanvasSize) -> VideoProject {
         let newProject = VideoProject(title: title, canvasSize: canvasSize)
-        // Add to the beginning of the list
         projects.insert(newProject, at: 0)
+        saveProjects()
         return newProject
     }
     
     func deleteProject(_ project: VideoProject) {
         if let index = projects.firstIndex(where: { $0.id == project.id }) {
             projects.remove(at: index)
+            saveProjects()
         }
     }
     
@@ -26,26 +32,60 @@ final class ProjectListViewModel {
         var duplicated = project
         duplicated.title = "\(project.title) (Copy)"
         duplicated.lastModifiedDate = Date()
-        let newProject = VideoProject(title: duplicated.title, creationDate: Date(), lastModifiedDate: Date(), thumbnailData: duplicated.thumbnailData, canvasSize: duplicated.canvasSize)
+        let newProject = VideoProject(
+            id: UUID(),
+            title: duplicated.title,
+            creationDate: Date(),
+            lastModifiedDate: Date(),
+            thumbnailData: duplicated.thumbnailData,
+            canvasSize: duplicated.canvasSize,
+            timeline: duplicated.timeline
+        )
         projects.insert(newProject, at: 0)
+        saveProjects()
     }
     
     func renameProject(_ project: VideoProject, newTitle: String) {
         if let index = projects.firstIndex(where: { $0.id == project.id }) {
             projects[index].title = newTitle
             projects[index].lastModifiedDate = Date()
+            saveProjects()
         }
     }
     
-    private func loadMockProjects() {
-        // Generate some dummy projects for initial UI testing
-        let dummyProjects = [
-            VideoProject(title: "Vlog Bali", creationDate: Date().addingTimeInterval(-86400 * 2), lastModifiedDate: Date().addingTimeInterval(-3600)),
-            VideoProject(title: "Cinematic B-Roll", creationDate: Date().addingTimeInterval(-86400 * 5), lastModifiedDate: Date().addingTimeInterval(-86400 * 1)),
-            VideoProject(title: "Tutorial Swift", creationDate: Date().addingTimeInterval(-86400 * 10), lastModifiedDate: Date().addingTimeInterval(-86400 * 8))
-        ]
+    func updateProject(_ project: VideoProject) {
+        if let index = projects.firstIndex(where: { $0.id == project.id }) {
+            projects[index] = project
+            projects[index].lastModifiedDate = Date()
+            saveProjects()
+        }
+    }
+    
+    private func saveProjects() {
+        do {
+            let data = try JSONEncoder().encode(projects)
+            try data.write(to: saveURL, options: [.atomic, .completeFileProtection])
+            print("Successfully saved \(projects.count) projects. Clip counts: \(projects.map { "\($0.title): \($0.timeline.clips.count) clips" })")
+        } catch {
+            print("Failed to save projects: \(error)")
+        }
+    }
+    
+    private func loadProjects() {
+        guard FileManager.default.fileExists(atPath: saveURL.path) else {
+            print("No saved projects file found at \(saveURL.path), starting empty")
+            self.projects = []
+            return
+        }
         
-        // Sort by last modified date descending
-        self.projects = dummyProjects.sorted(by: { $0.lastModifiedDate > $1.lastModifiedDate })
+        do {
+            let data = try Data(contentsOf: saveURL)
+            let decoded = try JSONDecoder().decode([VideoProject].self, from: data)
+            self.projects = decoded.sorted(by: { $0.lastModifiedDate > $1.lastModifiedDate })
+            print("Successfully loaded \(projects.count) projects. Clip counts: \(projects.map { "\($0.title): \($0.timeline.clips.count) clips" })")
+        } catch {
+            print("Failed to load projects: \(error), starting empty")
+            self.projects = []
+        }
     }
 }

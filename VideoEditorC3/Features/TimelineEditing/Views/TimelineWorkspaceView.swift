@@ -97,39 +97,39 @@ struct TimelineWorkspaceView: View {
                             // Ruler (Now acts as the header section)
                             TimelineRulerView(totalDuration: viewModel.timeline.totalDuration, pointsPerSecond: pointsPerSecond)
                                 .frame(height: 24)
-                            
                             VStack(spacing: 8) {
                                 ForEach(TrackType.allCases, id: \.self) { trackType in
-                                    ZStack(alignment: .leading) {
-                                        // Track Icon (positioned to the left of 00:00)
-                                        ZStack {
-                                            Circle()
-                                                .fill(Color.black.opacity(0.6))
-                                                .frame(width: 28, height: 28)
+                                        ZStack(alignment: .leading) {
+                                            // Track Icon (positioned to the left of 00:00)
+                                            ZStack {
+                                                Circle()
+                                                    .fill(Color.black.opacity(0.6))
+                                                    .frame(width: 28, height: 28)
+                                                
+                                                trackIcon(for: trackType)
+                                            }
+                                            .offset(x: -48) // Move it 48 points to the left of the track start
+                                            .zIndex(2) // Ensure it appears above other elements if they overlap
                                             
-                                            trackIcon(for: trackType)
-                                        }
-                                        .offset(x: -48) // Move it 48 points to the left of the track start
-                                        .zIndex(2) // Ensure it appears above other elements if they overlap
-                                        
-                                        // Empty Scene Background for Track
-                                        Rectangle()
-                                            .fill(Color(.systemGray5)) // Lighter gray for more contrast
-                                            .frame(width: max(geometry.size.width, viewModel.timeline.totalDuration * pointsPerSecond), height: trackHeight(for: trackType))
-                                            .cornerRadius(4)
-                                        
-                                        let trackClips = viewModel.timeline.clips.filter { $0.trackType == trackType }
-                                        
-                                        // Clips for this specific track
-                                        ForEach(trackClips) { clip in
-                                            TimelineClipView(clip: clip, pointsPerSecond: pointsPerSecond, trackHeight: trackHeight(for: trackType))
-                                        }
-                                        
-                                        // "Add Scene" button for Video track
-                                        if trackType == .video {
+                                            // Empty Scene Background for Track
+                                            let isTimelineEmpty = viewModel.timeline.clips.isEmpty
+                                            let trackWidth = isTimelineEmpty ? 120.0 : max(geometry.size.width, viewModel.timeline.totalDuration * pointsPerSecond)
+                                            Rectangle()
+                                                .fill(Color(.systemGray5)) // Lighter gray for more contrast
+                                                .frame(width: trackWidth, height: trackHeight(for: trackType))
+                                                .cornerRadius(4)
+                                            
+                                            let trackClips = viewModel.timeline.clips.filter { $0.trackType == trackType }
+                                            
+                                            // Clips for this specific track
+                                            ForEach(trackClips) { clip in
+                                                TimelineClipView(clip: clip, pointsPerSecond: pointsPerSecond, trackHeight: trackHeight(for: trackType))
+                                            }
+                                            
+                                            // "Add" button for all tracks
                                             let maxTime = trackClips.map { $0.startTime + $0.duration }.max() ?? 0
                                             Button(action: {
-                                                // Placeholder for adding a new scene
+                                                // Placeholder for adding a new clip
                                             }) {
                                                 ZStack {
                                                     RoundedRectangle(cornerRadius: 6)
@@ -138,22 +138,21 @@ struct TimelineWorkspaceView: View {
                                                         .strokeBorder(style: StrokeStyle(lineWidth: 1, dash: [4]))
                                                         .foregroundColor(.gray)
                                                     
-                                                    VStack(spacing: 2) {
+                                                    HStack(spacing: 4) {
                                                         Image(systemName: "plus")
                                                             .font(.system(size: 14, weight: .bold))
-                                                        Text("Add")
-                                                            .font(.system(size: 10, weight: .semibold))
+                                                        Text(trackType == .video ? "Add Scene" : (trackType == .audio ? "Add Audio" : "Add Text"))
+                                                            .font(.system(size: 12, weight: .semibold))
                                                     }
                                                     .foregroundColor(.gray)
                                                 }
-                                                .frame(width: 60, height: trackHeight(for: trackType) - 4)
+                                                .frame(width: 120, height: trackHeight(for: trackType) - 4)
                                             }
                                             // Place at the end of the last clip, or at 00:00 if empty
                                             .offset(x: maxTime * pointsPerSecond + (maxTime == 0 ? 0 : 8))
                                         }
                                     }
                                 }
-                            }
                         }
                         .background(
                             GeometryReader { proxy in
@@ -235,9 +234,12 @@ struct TimelineWorkspaceView: View {
     // Determine the height of each track layer
     private func trackHeight(for type: TrackType) -> CGFloat {
         switch type {
-        case .video: return 50
-        case .audio: return 40
-        case .text: return 30
+        case .video:
+            return 45
+        case .audio:
+            return 35
+        case .text:
+            return 30
         }
     }
     

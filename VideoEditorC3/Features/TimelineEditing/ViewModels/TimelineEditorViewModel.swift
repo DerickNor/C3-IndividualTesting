@@ -37,6 +37,38 @@ class TimelineEditorViewModel {
     
     // Selection state for trim handles
     var selectedClipID: UUID? = nil
+    var draggedClipID: UUID? = nil
+    
+    // Undo/Redo Mechanism
+    private var undoStack: [Timeline] = []
+    private var redoStack: [Timeline] = []
+    
+    var canUndo: Bool { !undoStack.isEmpty }
+    var canRedo: Bool { !redoStack.isEmpty }
+    
+    func snapshotForUndo() {
+        undoStack.append(timeline)
+        if undoStack.count > 10 {
+            undoStack.removeFirst()
+        }
+        redoStack.removeAll()
+    }
+    
+    @MainActor
+    func undo() {
+        guard let last = undoStack.popLast() else { return }
+        redoStack.append(timeline)
+        timeline = last
+        Task { await rebuildComposition(); save() }
+    }
+    
+    @MainActor
+    func redo() {
+        guard let next = redoStack.popLast() else { return }
+        undoStack.append(timeline)
+        timeline = next
+        Task { await rebuildComposition(); save() }
+    }
     
     // Token to force the scroll view to sync position without feedback loop
     var scrollSyncToken: UUID = UUID()
@@ -83,6 +115,18 @@ class TimelineEditorViewModel {
         } else {
             player.pause()
             removeTimeObserver()
+        }
+    }
+    
+    func play() {
+        if !isPlaying {
+            togglePlayback()
+        }
+    }
+    
+    func pause() {
+        if isPlaying {
+            togglePlayback()
         }
     }
     
@@ -133,7 +177,7 @@ class TimelineEditorViewModel {
     }
     
     @MainActor
-    private func rebuildComposition() async {
+    func rebuildComposition() async {
         let newComposition = AVMutableComposition()
         let videoTrack = newComposition.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid)
         let audioTrack = newComposition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid)
@@ -231,9 +275,64 @@ class TimelineEditorViewModel {
             }
             
             if !newClips.isEmpty {
+                self.snapshotForUndo()
                 self.timeline.clips.append(contentsOf: newClips)
-                await self.rebuildComposition()
-                self.save()
+                self.rippleClips(for: .video)
+                Task { await self.rebuildComposition(); self.save() }
+            }
+        }
+    }
+    
+    @MainActor
+    func addVideoClips(fromURLs urls: [URL]) {
+        guard !urls.isEmpty else { return }
+        
+        Task {
+            var newClips: [Clip] = []
+            for url in urls {
+                // Determine if we need to copy the file. For security-scoped URLs from file importer,
+                // we should copy it to the app's documents directory to ensure persistent access.
+                guard url.startAccessingSecurityScopedResource() else { continue }
+                defer { url.stopAccessingSecurityScopedResource() }
+                
+                do {
+                    let fileManager = FileManager.default
+                    let documentsURL = fileManager.urls(for: .documentDirectory, in: .userDomainMask)[0]
+                    let permanentURL = documentsURL.appendingPathComponent("\(UUID().uuidString).\(url.pathExtension)")
+                    
+                    try fileManager.copyItem(at: url, to: permanentURL)
+                    
+                    let asset = AVURLAsset(url: permanentURL)
+                    let duration = try await asset.load(.duration).seconds
+                    
+                    let existingMax = timeline.clips.filter { $0.trackType == .video }.map { $0.startTime + $0.duration }.max() ?? 0
+                    let newMax = newClips.map { $0.startTime + $0.duration }.max() ?? 0
+                    let startTime = max(existingMax, newMax)
+                    
+                    let newClip = Clip(
+                        id: UUID(),
+                        name: "Video \(timeline.clips.count + newClips.count + 1)",
+                        startTime: startTime,
+                        duration: duration,
+                        color: .blue,
+                        trackType: .video,
+                        url: permanentURL,
+                        sourceStartTime: 0,
+                        assetDuration: duration
+                    )
+                    newClips.append(newClip)
+                } catch {
+                    print("Error importing file from URL: \(error)")
+                }
+            }
+            
+            await MainActor.run {
+                if !newClips.isEmpty {
+                    self.snapshotForUndo()
+                    self.timeline.clips.append(contentsOf: newClips)
+                    self.rippleClips(for: .video)
+                    Task { await self.rebuildComposition(); self.save() }
+                }
             }
         }
     }
@@ -252,8 +351,37 @@ class TimelineEditorViewModel {
     }
     
     @MainActor
+    func handleReorderDrag(clipID: UUID, initialStartTime: TimeInterval, translation: CGFloat, pointsPerSecond: CGFloat) {
+        guard let currentIndex = timeline.clips.firstIndex(where: { $0.id == clipID }) else { return }
+        let draggedClip = timeline.clips[currentIndex]
+        let trackType = draggedClip.trackType
+        
+        let initialBaseX = initialStartTime * pointsPerSecond
+        let width = draggedClip.duration * pointsPerSecond
+        let virtualCenterX = initialBaseX + translation + (width / 2)
+        
+        var trackClips = timeline.clips.filter { $0.trackType == trackType }.sorted { $0.startTime < $1.startTime }
+        
+        trackClips.sort { clip1, clip2 in
+            let center1 = (clip1.id == clipID) ? virtualCenterX : ((clip1.startTime + (clip1.duration / 2)) * pointsPerSecond)
+            let center2 = (clip2.id == clipID) ? virtualCenterX : ((clip2.startTime + (clip2.duration / 2)) * pointsPerSecond)
+            return center1 < center2
+        }
+        
+        var currentOffset: TimeInterval = 0.0
+        for i in 0..<trackClips.count {
+            trackClips[i].startTime = currentOffset
+            currentOffset += trackClips[i].duration
+        }
+        
+        timeline.clips.removeAll(where: { $0.trackType == trackType })
+        timeline.clips.append(contentsOf: trackClips)
+    }
+    
+    @MainActor
     func updateClipTrim(id: UUID, startTime: TimeInterval, duration: TimeInterval, sourceStartTime: TimeInterval, resetToStart: Bool = true) {
         if let index = timeline.clips.firstIndex(where: { $0.id == id }) {
+            self.snapshotForUndo()
             let trackType = timeline.clips[index].trackType
             timeline.clips[index].startTime = max(0, startTime)
             timeline.clips[index].duration = max(0.1, duration)
@@ -275,6 +403,21 @@ class TimelineEditorViewModel {
                     // Keep current playhead position, just ensure player is synced to it exactly
                     self.scrub(to: self.currentTime, exact: true)
                 }
+            }
+        }
+    }
+    
+    @MainActor
+    func deleteClip(id: UUID) {
+        if let index = timeline.clips.firstIndex(where: { $0.id == id }) {
+            self.snapshotForUndo()
+            let trackType = timeline.clips[index].trackType
+            timeline.clips.remove(at: index)
+            rippleClips(for: trackType)
+            
+            Task {
+                await self.rebuildComposition()
+                self.save()
             }
         }
     }

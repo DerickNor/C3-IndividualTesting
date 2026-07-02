@@ -7,6 +7,9 @@ struct TimelineWorkspaceView: View {
     
     @State private var selectedVideoItems: [PhotosPickerItem] = []
     @State private var scrollPosition = ScrollPosition(edge: .leading)
+    @State private var wasPlayingBeforeScroll = false
+    @State private var showingFileImporter = false
+    @State private var activeAddMenuTrack: TrackType? = nil
     
     var body: some View {
         VStack(spacing: 0) {
@@ -57,24 +60,24 @@ struct TimelineWorkspaceView: View {
                     Spacer()
                     HStack(spacing: 2) {
                         Button(action: {
-                            // Undo
+                            viewModel.undo()
                         }) {
                             Image(systemName: "arrow.uturn.backward")
                                 .font(.system(size: 18))
-                                .foregroundColor(.primary)
+                                .foregroundColor(viewModel.canUndo ? .primary : .gray)
                                 .frame(width: 44, height: 44)
                         }
-                        .disabled(true) // Disable until logic is ready
+                        .disabled(!viewModel.canUndo)
                         
                         Button(action: {
-                            // Redo
+                            viewModel.redo()
                         }) {
                             Image(systemName: "arrow.uturn.forward")
                                 .font(.system(size: 18))
-                                .foregroundColor(.primary)
+                                .foregroundColor(viewModel.canRedo ? .primary : .gray)
                                 .frame(width: 44, height: 44)
                         }
-                        .disabled(true)
+                        .disabled(!viewModel.canRedo)
                     }
                 }
             }
@@ -101,7 +104,9 @@ struct TimelineWorkspaceView: View {
                                         trackType: trackType,
                                         viewModel: viewModel,
                                         pointsPerSecond: pointsPerSecond,
-                                        trackHeight: trackHeight(for: trackType)
+                                        trackHeight: trackHeight(for: trackType),
+                                        showingFileImporter: $showingFileImporter,
+                                        activeAddMenuTrack: $activeAddMenuTrack
                                     )
                                 }
                             }
@@ -111,6 +116,19 @@ struct TimelineWorkspaceView: View {
                         .padding(.horizontal, halfWidth)
                     }
                     .scrollPosition($scrollPosition)
+                    .onScrollPhaseChange { oldPhase, newPhase in
+                        if newPhase == .interacting {
+                            if viewModel.isPlaying {
+                                wasPlayingBeforeScroll = true
+                                viewModel.pause()
+                            }
+                        } else if newPhase == .idle {
+                            if wasPlayingBeforeScroll {
+                                wasPlayingBeforeScroll = false
+                                viewModel.play()
+                            }
+                        }
+                    }
                     .onScrollGeometryChange(for: CGFloat.self) { geo in
                         geo.contentOffset.x
                     } action: { _, offsetX in
@@ -138,6 +156,52 @@ struct TimelineWorkspaceView: View {
                         // The playhead spans the height of the timeline area
                         .frame(maxHeight: .infinity)
                         .padding(.top, 16) // Start from ruler level
+                        
+                    // Fixed Add Buttons (Right aligned)
+                    VStack(alignment: .trailing, spacing: 8) {
+                        Spacer().frame(height: 35) // Adjusted upward slightly for optical alignment with the track
+                        ForEach(TrackType.allCases, id: \.self) { trackType in
+                            let trackHeight = trackHeight(for: trackType)
+                            let hasClips = !viewModel.timeline.clips.filter { $0.trackType == trackType }.isEmpty
+                            if hasClips {
+                                Button(action: {
+                                    activeAddMenuTrack = (activeAddMenuTrack == trackType) ? nil : trackType
+                                }) {
+                                    ZStack {
+                                        RoundedRectangle(cornerRadius: 6)
+                                            .fill(Color.white)
+                                            .frame(width: 26, height: 26)
+                                            .shadow(color: .black.opacity(0.3), radius: 2, x: 0, y: 1)
+                                        Image(systemName: "plus")
+                                            .font(.system(size: 14, weight: .bold))
+                                            .foregroundColor(.black)
+                                    }
+                                    .frame(width: 44, height: trackHeight)
+                                }
+                                .overlay(alignment: .leading) {
+                                    if activeAddMenuTrack == trackType {
+                                        TinyAddMenu(
+                                            actionPhoto: {
+                                                activeAddMenuTrack = nil
+                                                if trackType == .video { viewModel.isShowingVideoPicker = true }
+                                            },
+                                            actionFiles: {
+                                                activeAddMenuTrack = nil
+                                                if trackType == .video { showingFileImporter = true }
+                                            }
+                                        )
+                                        .offset(x: -140) // Place directly left of the + button
+                                        .zIndex(50)
+                                    }
+                                }
+                            } else {
+                                // Empty space if this track has no clips to maintain vertical alignment
+                                Spacer().frame(height: trackHeight)
+                            }
+                        }
+                        Spacer()
+                    }
+                    .frame(maxWidth: .infinity, alignment: .trailing)
                     
                     // Floating Total Time Badge (Top Left)
                     HStack {
@@ -167,6 +231,14 @@ struct TimelineWorkspaceView: View {
                     .padding(.top, 14) // Nudged up slightly for visual alignment
                 }
                 .background(Color(.systemGray6))
+                .onTapGesture {
+                    // Dismiss menu when tapping outside
+                    if activeAddMenuTrack != nil {
+                        withAnimation(.easeInOut(duration: 0.15)) {
+                            activeAddMenuTrack = nil
+                        }
+                    }
+                }
             }
         }
         .photosPicker(isPresented: $viewModel.isShowingVideoPicker, selection: $selectedVideoItems, matching: .videos)
@@ -174,6 +246,14 @@ struct TimelineWorkspaceView: View {
             guard !newItems.isEmpty else { return }
             viewModel.addVideoClips(from: newItems)
             selectedVideoItems = [] // Reset for next selection
+        }
+        .fileImporter(isPresented: $showingFileImporter, allowedContentTypes: [.movie, .video, .mpeg4Movie, .quickTimeMovie], allowsMultipleSelection: true) { result in
+            switch result {
+            case .success(let urls):
+                viewModel.addVideoClips(fromURLs: urls)
+            case .failure(let error):
+                print("Error selecting files: \(error.localizedDescription)")
+            }
         }
     }
     
@@ -196,9 +276,9 @@ struct TimelineWorkspaceView: View {
     private func trackHeight(for type: TrackType) -> CGFloat {
         switch type {
         case .video:
-            return 50
+            return 60
         case .audio:
-            return 40
+            return 45
         case .text:
             return 35
         }
@@ -216,7 +296,7 @@ struct TimelineWorkspaceView: View {
                     .font(.system(size: 12, weight: .bold))
             }
         case .audio:
-            Image(systemName: "music.note")
+            Image(systemName: "waveform")
                 .foregroundColor(.white)
                 .font(.system(size: 14, weight: .bold))
         case .text:
@@ -238,7 +318,7 @@ struct TimelineRulerView: View {
         let seconds = Int(totalDuration)
         
         ZStack(alignment: .leading) {
-            ForEach(0...seconds, id: \.self) { second in
+            ForEach(Array(stride(from: 0, through: seconds, by: 2)), id: \.self) { second in
                 VStack(spacing: 2) {
                     Text(formatTimeWithoutMs(TimeInterval(second)))
                         .font(.system(size: 10, weight: .medium, design: .monospaced))
@@ -269,9 +349,11 @@ struct TrackRowView: View {
     let viewModel: TimelineEditorViewModel
     let pointsPerSecond: CGFloat
     let trackHeight: CGFloat
-
+    
+    @Binding var showingFileImporter: Bool
+    @Binding var activeAddMenuTrack: TrackType?
     private var trackClips: [Clip] {
-        viewModel.timeline.clips.filter { $0.trackType == trackType }
+        viewModel.timeline.clips.filter { $0.trackType == trackType }.sorted { $0.startTime < $1.startTime }
     }
 
     // Only this track's own clips determine its width and Add button position
@@ -299,7 +381,7 @@ struct TrackRowView: View {
                         .foregroundColor(.white)
                 }
             case .audio:
-                Image(systemName: "music.note")
+                Image(systemName: "waveform")
                     .font(.system(size: 12))
                     .foregroundColor(.white)
             case .text:
@@ -323,13 +405,14 @@ struct TrackRowView: View {
             .zIndex(2)
 
             // Gray background — exactly fits clips + Add button for THIS track only
-            Rectangle()
-                .fill(Color(.systemGray5))
-                .frame(width: trackWidth, height: trackHeight)
-                .cornerRadius(4)
-                .onTapGesture {
-                    viewModel.selectedClipID = nil
-                }
+            if trackClips.isEmpty {
+                Rectangle()
+                    .fill(Color(.systemGray5))
+                    .frame(width: trackWidth, height: trackHeight)
+                    .onTapGesture {
+                        viewModel.selectedClipID = nil
+                    }
+            }
 
             // Clips
             ForEach(trackClips) { clip in
@@ -340,32 +423,127 @@ struct TrackRowView: View {
                     viewModel: viewModel
                 )
             }
+            
+            // Transition markers (link chain) between scenes
+            ForEach(0..<trackClips.count, id: \.self) { i in
+                if i < trackClips.count - 1 {
+                    let linkTime = trackClips[i].startTime + trackClips[i].duration
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 4)
+                            .fill(Color.white)
+                            .frame(width: 20, height: 20)
+                            .shadow(color: .black.opacity(0.3), radius: 2, x: 0, y: 1)
+                        Image(systemName: "link")
+                            .font(.system(size: 12, weight: .bold))
+                            .foregroundColor(.black)
+                    }
+                    .offset(x: linkTime * pointsPerSecond - 10)
+                    .zIndex(10)
+                }
+            }
 
             // Add button placed immediately after last clip
-            Button(action: {
-                if trackType == .video {
-                    viewModel.isShowingVideoPicker = true
-                }
-            }) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(Color.black.opacity(0.3))
-                    RoundedRectangle(cornerRadius: 6)
-                        .strokeBorder(style: StrokeStyle(lineWidth: 1, dash: [4]))
-                        .foregroundColor(.gray)
-                    HStack(spacing: 4) {
-                        Image(systemName: "plus")
-                            .font(.system(size: 14, weight: .bold))
-                        Text(trackType == .video ? "Add Scene" : (trackType == .audio ? "Add Audio" : "Add Text"))
-                            .font(.system(size: 12, weight: .semibold))
+            if trackClips.isEmpty {
+                HStack(spacing: 0) {
+                    Spacer()
+                        .frame(width: ownMaxTime * pointsPerSecond + addButtonGap)
+                    
+                    Button(action: {
+                        activeAddMenuTrack = (activeAddMenuTrack == trackType) ? nil : trackType
+                    }) {
+                        ZStack {
+                            RoundedRectangle(cornerRadius: 6)
+                                .fill(Color.black.opacity(0.3))
+                            RoundedRectangle(cornerRadius: 6)
+                                .strokeBorder(style: StrokeStyle(lineWidth: 1, dash: [4]))
+                                .foregroundColor(.gray)
+                            HStack(spacing: 4) {
+                                Image(systemName: "plus")
+                                    .font(.system(size: 14, weight: .bold))
+                                Text(trackType == .video ? "Add Scene" : (trackType == .audio ? "Add Audio" : "Add Text"))
+                                    .font(.system(size: 12, weight: .semibold))
+                            }
+                            .foregroundColor(.gray)
+                        }
+                        .frame(width: addButtonWidth, height: trackHeight - 4)
                     }
-                    .foregroundColor(.gray)
+                    .buttonStyle(DimmingButtonStyle())
+                    .overlay(alignment: .top) {
+                        if activeAddMenuTrack == trackType {
+                            TinyAddMenu(
+                                actionPhoto: {
+                                    activeAddMenuTrack = nil
+                                    if trackType == .video { viewModel.isShowingVideoPicker = true }
+                                },
+                                actionFiles: {
+                                    activeAddMenuTrack = nil
+                                    if trackType == .video { showingFileImporter = true }
+                                }
+                            )
+                            .offset(y: -80) // Centered cleanly above the block button
+                            .zIndex(50)
+                        }
+                    }
                 }
-                .frame(width: addButtonWidth, height: trackHeight - 4)
+                .animation(nil, value: ownMaxTime)
             }
-            .offset(x: ownMaxTime * pointsPerSecond + addButtonGap)
-            .animation(nil, value: ownMaxTime)
         }
         .animation(nil, value: trackWidth)
+    }
+}
+
+struct TinyAddMenu: View {
+    let actionPhoto: () -> Void
+    let actionFiles: () -> Void
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Button(action: actionPhoto) {
+                HStack(spacing: 6) {
+                    Image(systemName: "photo.on.rectangle")
+                        .font(.system(size: 12))
+                    Text("Photo Album")
+                        .font(.system(size: 12, weight: .medium))
+                    Spacer()
+                }
+                .padding(.horizontal, 10)
+                .frame(height: 32)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            
+            Divider()
+            
+            Button(action: actionFiles) {
+                HStack(spacing: 6) {
+                    Image(systemName: "folder")
+                        .font(.system(size: 12))
+                    Text("Files")
+                        .font(.system(size: 12, weight: .medium))
+                    Spacer()
+                }
+                .padding(.horizontal, 10)
+                .frame(height: 32)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+        }
+        .frame(width: 130)
+        .padding(.vertical, 4)
+        .background(.ultraThinMaterial)
+        .cornerRadius(10)
+        .shadow(color: .black.opacity(0.15), radius: 10, x: 0, y: 4)
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(Color.gray.opacity(0.2), lineWidth: 0.5)
+        )
+    }
+}
+
+struct DimmingButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .opacity(configuration.isPressed ? 0.6 : 1.0)
+            .animation(.easeInOut(duration: 0.1), value: configuration.isPressed)
     }
 }

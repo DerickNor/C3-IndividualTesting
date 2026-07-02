@@ -39,6 +39,8 @@ struct TimelineEditorView: View {
     @State private var activeTooltip: EditorTool? = nil
     @State private var showDeleteAlert = false
     
+    @Environment(\.dismiss) private var dismiss
+    
     // Hardcoded scale for the dummy timeline: 20 points per second
     let pointsPerSecond: CGFloat = 75
     
@@ -53,52 +55,6 @@ struct TimelineEditorView: View {
                 // Single workspace view that never gets destroyed
                 TimelineWorkspaceView(viewModel: viewModel, pointsPerSecond: pointsPerSecond)
                 
-                // Custom Bottom Toolbar
-                Divider()
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 16) {
-                        ForEach(EditorTool.allCases) { tool in
-                            Button(action: {
-                                if tool == .delete {
-                                    if viewModel.selectedClipID != nil {
-                                        showDeleteAlert = true
-                                    }
-                                    return
-                                }
-                                
-                                // Tap logic identical to tabSelectionBinding
-                                if selectedTab == tool {
-                                    if tool == .ai || tool == .edit {
-                                        withAnimation(.spring) {
-                                            activeTooltip = (activeTooltip == tool) ? nil : tool
-                                        }
-                                    }
-                                } else {
-                                    selectedTab = tool
-                                    if tool == .ai || tool == .edit {
-                                        withAnimation(.spring) {
-                                            activeTooltip = tool
-                                        }
-                                    } else {
-                                        withAnimation { activeTooltip = nil }
-                                    }
-                                }
-                            }) {
-                                VStack(spacing: 4) {
-                                    Image(systemName: tool.iconName)
-                                        .font(.system(size: 20))
-                                    Text(tool.title)
-                                        .font(.system(size: 10))
-                                }
-                                .foregroundColor(tool == .delete ? (viewModel.selectedClipID != nil ? .red : .gray.opacity(0.5)) : (selectedTab == tool ? .white : .gray))
-                                .frame(width: 56) // Fixed width for consistent spacing
-                            }
-                        }
-                    }
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 12)
-                }
-                .background(Color(.systemGray6))
             }
             .simultaneousGesture(
                 TapGesture().onEnded {
@@ -107,46 +63,6 @@ struct TimelineEditorView: View {
                     }
                 }
             )
-            
-            if let tool = activeTooltip {
-                VStack {
-                    Spacer()
-                    HStack {
-                        if tool == .ai {
-                            EditorTooltipMenu(
-                                items: [
-                                    TooltipMenuItem(id: "cut", icon: "scissors", title: "Auto-Cut"),
-                                    TooltipMenuItem(id: "caption", icon: "captions.bubble", title: "Auto-Caption"),
-                                    TooltipMenuItem(id: "sequence", icon: "film", title: "Auto-Sequence")
-                                ],
-                                arrowOffset: 24
-                            ) { _ in
-                                withAnimation { activeTooltip = nil }
-                            }
-                            .padding(.leading, 16)
-                            .padding(.bottom, 60)
-                            
-                        } else if tool == .edit {
-                            EditorTooltipMenu(
-                                items: [
-                                    TooltipMenuItem(id: "split", icon: "scissors.badge.ellipsis", title: "Split"),
-                                    TooltipMenuItem(id: "volume", icon: "speaker.wave.2.fill", title: "Volume")
-                                ],
-                                arrowOffset: 24 // Offset within the tooltip box
-                            ) { _ in
-                                withAnimation { activeTooltip = nil }
-                            }
-                            // Shift the tooltip to roughly align above the 2nd tab
-                            // 16 padding + approx 56pt per tab width
-                            .padding(.leading, 16 + 56)
-                            .padding(.bottom, 60)
-                        }
-                        Spacer()
-                    }
-                }
-                .transition(.scale(scale: 0.8, anchor: tool == .ai ? .bottomLeading : .bottom).combined(with: .opacity))
-                .zIndex(1)
-            }
             
 
         }
@@ -163,6 +79,100 @@ struct TimelineEditorView: View {
         }
         .navigationTitle(viewModel.project.title)
         .navigationBarTitleDisplayMode(.inline)
+        .navigationBarBackButtonHidden(true)
+        .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                Button(action: {
+                    dismiss()
+                }) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "chevron.backward")
+                            .font(.system(size: 17, weight: .semibold))
+                        Text("Back")
+                            .font(.system(size: 17))
+                    }
+                }
+            }
+            
+            ToolbarItem(placement: .topBarTrailing) {
+                Button(action: {
+                    // Export logic placeholder
+                }) {
+                    Image(systemName: "square.and.arrow.up")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(.white)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.blue)
+                .buttonBorderShape(.circle)
+            }
+            
+            ToolbarItemGroup(placement: .bottomBar) {
+                ControlGroup {
+                    Menu {
+                        Button(action: { selectedTab = .ai; withAnimation { activeTooltip = nil } }) {
+                            Label("Auto-Cut", systemImage: "scissors")
+                        }
+                        Button(action: { selectedTab = .ai; withAnimation { activeTooltip = nil } }) {
+                            Label("Auto-Sequence", systemImage: "film")
+                        }
+                        Menu {
+                            Button(action: { selectedTab = .ai; withAnimation { activeTooltip = nil } }) {
+                                Label("Auto Generate", systemImage: "wand.and.stars")
+                            }
+                            Button(action: { selectedTab = .ai; withAnimation { activeTooltip = nil } }) {
+                                Label("Input Script", systemImage: "doc.plaintext")
+                            }
+                        } label: {
+                            Label("Auto-Caption", systemImage: "captions.bubble")
+                        }
+                    } label: {
+                        Label("AI", systemImage: "sparkles")
+                    }
+                    
+                    Menu {
+                        Button(action: { selectedTab = .edit; withAnimation { activeTooltip = nil } }) {
+                            Label("Split", systemImage: "scissors.badge.ellipsis")
+                        }
+                        Button(action: { selectedTab = .edit; withAnimation { activeTooltip = nil } }) {
+                            Label("Volume", systemImage: "speaker.wave.2.fill")
+                        }
+                    } label: {
+                        Label("Edit", systemImage: "scissors")
+                    }
+                    
+                    Button(action: {
+                        withAnimation { activeTooltip = nil }
+                        selectedTab = .audio
+                    }) {
+                        Label("Audio", systemImage: "waveform")
+                    }
+                    
+                    Menu {
+                        Button(action: { selectedTab = .text; withAnimation { activeTooltip = nil } }) {
+                            Label("Text", systemImage: "textformat")
+                        }
+                        Button(action: { selectedTab = .overlay; withAnimation { activeTooltip = nil } }) {
+                            Label("Overlay", systemImage: "square.on.square")
+                        }
+                        Button(action: { selectedTab = .captions; withAnimation { activeTooltip = nil } }) {
+                            Label("Captions", systemImage: "captions.bubble")
+                        }
+                        Button(role: .destructive, action: {
+                            if viewModel.selectedClipID != nil {
+                                showDeleteAlert = true
+                            }
+                        }) {
+                            Label("Delete", systemImage: "trash")
+                        }
+                    } label: {
+                        Label("More", systemImage: "ellipsis.circle")
+                    }
+                }
+                
+                Spacer()
+            }
+        }
     }
 }
 
@@ -171,6 +181,7 @@ import AVFoundation
 
 struct TimelineClipView: View {
     let clip: Clip
+    let index: Int
     let pointsPerSecond: CGFloat
     let trackHeight: CGFloat
     let viewModel: TimelineEditorViewModel
@@ -180,6 +191,8 @@ struct TimelineClipView: View {
     // Drag state for reordering
     @State private var dragReorderTranslation: CGFloat = 0
     @State private var initialStartTime: TimeInterval = 0
+    @State private var initialIndex: Int = 0
+    @State private var initialTrackIndex: Int = 0
     
     // Drag state for trimming
     @State private var dragOffsetLeft: CGFloat = 0
@@ -187,31 +200,41 @@ struct TimelineClipView: View {
     
     // Auto-scroll trim states
     @State private var currentDragTranslation: CGFloat = 0
+    @State private var currentDragTranslationHeight: CGFloat = 0
     @State private var accumulatedAutoScroll: CGFloat = 0
     @State private var isAutoScrollingLeft = false
     @State private var isAutoScrollingRight = false
     @State private var isDraggingLeft = false
     @State private var isDraggingRight = false
     @State private var isDraggingReorder = false
+    @State private var isLifted = false
+    @GestureState private var isHoldAndDragActive = false
     
     let autoScrollTimer = Timer.publish(every: 0.05, on: .main, in: .common).autoconnect()
     
-    private func updateReorder() {
+    private func updateReorder(translationHeight: CGFloat) {
         let totalTranslation = currentDragTranslation + accumulatedAutoScroll
         dragReorderTranslation = totalTranslation
         
-        viewModel.handleReorderDrag(
-            clipID: clip.id,
-            initialStartTime: initialStartTime,
-            translation: totalTranslation,
-            pointsPerSecond: pointsPerSecond
-        )
+        let trackSpacing: CGFloat = 4
+        let totalTrackHeight = trackHeight + trackSpacing
         
-        if isAutoScrollingLeft || isAutoScrollingRight {
-            let newVirtualX = (initialStartTime * pointsPerSecond) + totalTranslation
-            viewModel.currentTime = max(0, newVirtualX / pointsPerSecond)
-            viewModel.syncScroll()
+        let trackDelta = Int(round(translationHeight / totalTrackHeight))
+        let targetTrackIndex = max(0, initialTrackIndex + trackDelta)
+        
+        if targetTrackIndex != clip.trackType {
+            viewModel.moveClip(id: clip.id, toTrack: targetTrackIndex)
         }
+        
+        let thumbWidth = max(trackHeight - 4, 10)
+        let virtualCenterX = (CGFloat(initialIndex) * thumbWidth) + totalTranslation + (thumbWidth / 2)
+        
+        viewModel.handleCompressedReorderDrag(
+            clipID: clip.id,
+            trackType: clip.trackType,
+            virtualCenterX: virtualCenterX,
+            thumbWidth: thumbWidth
+        )
     }
     
     private func updateTrimLeft() {
@@ -240,7 +263,16 @@ struct TimelineClipView: View {
     var body: some View {
         let currentWidth = max(0, clip.duration * pointsPerSecond) + dragOffsetRight - dragOffsetLeft
         let isDragged = viewModel.draggedClipID == clip.id
-        let baseOffset = isDragged ? (initialStartTime * pointsPerSecond + dragReorderTranslation) : (clip.startTime * pointsPerSecond)
+        
+        let thumbWidth = max(trackHeight - 4, 10)
+        let isCompressed = viewModel.draggedClipID != nil
+        let displayWidth = isCompressed ? thumbWidth : max(0, currentWidth)
+        
+        let baseOffset = isCompressed 
+            ? (isDragged ? (CGFloat(initialIndex) * thumbWidth + dragReorderTranslation) : (CGFloat(index) * thumbWidth))
+            : (isDragged ? (initialStartTime * pointsPerSecond + dragReorderTranslation) : (clip.startTime * pointsPerSecond))
+            
+        let visualOffset: CGFloat = 0
         
         return ZStack(alignment: .leading) {
             
@@ -272,47 +304,98 @@ struct TimelineClipView: View {
                     .stroke(isSelected ? Color.white : Color.white.opacity(0.4),
                             lineWidth: isSelected ? 2 : 1)
             }
-            .padding(.leading, clip.startTime == 0 ? 0 : 4)
-            .padding(.trailing, 4)
             .contentShape(Rectangle())
-            .onTapGesture {
-                // Toggle selection — deselect if already selected
-                viewModel.selectedClipID = (viewModel.selectedClipID == clip.id) ? nil : clip.id
-            }
+            .simultaneousGesture(
+                TapGesture().onEnded {
+                    // Toggle selection — deselect if already selected
+                    viewModel.selectedClipID = (viewModel.selectedClipID == clip.id) ? nil : clip.id
+                }
+            )
             .highPriorityGesture(
-                DragGesture(minimumDistance: 10, coordinateSpace: .global)
+                LongPressGesture(minimumDuration: 0.5)
+                    .sequenced(before: DragGesture(minimumDistance: 0, coordinateSpace: .global))
                     .onChanged { value in
-                        if viewModel.draggedClipID != clip.id {
-                            viewModel.draggedClipID = clip.id
-                            initialStartTime = clip.startTime
+                        switch value {
+                        case .first(true):
+                            break // Do nothing during the 3-second hold tracking phase
+                        case .second(true, let dragValue):
+                            if !isLifted {
+                                withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) {
+                                    isLifted = true
+                                    viewModel.selectedClipID = clip.id
+                                    
+                                    if viewModel.draggedClipID != clip.id {
+                                        viewModel.draggedClipID = clip.id
+                                        initialStartTime = clip.startTime
+                                        initialIndex = index
+                                        initialTrackIndex = clip.trackType
+                                        viewModel.currentTime = 0
+                                        viewModel.syncScroll()
+                                    }
+                                }
+                            }
+                            
+                            guard let value = dragValue else { return }
+                            
+                            isDraggingReorder = true
+                            currentDragTranslation = value.translation.width
+                            currentDragTranslationHeight = value.translation.height
+                            
+                            let globalX = value.location.x
+                            let screenWidth = (UIApplication.shared.connectedScenes.first as? UIWindowScene)?.screen.bounds.width ?? 400
+                            isAutoScrollingLeft = globalX < 80
+                            isAutoScrollingRight = globalX > screenWidth - 80
+                            
+                            updateReorder(translationHeight: currentDragTranslationHeight)
+                        default:
+                            break
                         }
-                        
-                        isDraggingReorder = true
-                        currentDragTranslation = value.translation.width
-                        
-                        let globalX = value.location.x
-                        let screenWidth = (UIApplication.shared.connectedScenes.first as? UIWindowScene)?.screen.bounds.width ?? 400
-                        isAutoScrollingLeft = globalX < 80
-                        isAutoScrollingRight = globalX > screenWidth - 80
-                        
-                        updateReorder()
+                    }
+                    .updating($isHoldAndDragActive) { value, state, _ in
+                        state = true
                     }
                     .onEnded { _ in
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) {
+                            isLifted = false
+                        }
+                        
                         isDraggingReorder = false
                         isAutoScrollingLeft = false
                         isAutoScrollingRight = false
                         
-                        viewModel.snapshotForUndo()
+                        if viewModel.draggedClipID != nil {
+                            viewModel.snapshotForUndo()
+                            viewModel.draggedClipID = nil
+                            dragReorderTranslation = 0
+                            currentDragTranslation = 0
+                            accumulatedAutoScroll = 0
+                            viewModel.cleanupEmptyTracks()
+                            Task { await viewModel.rebuildComposition(); viewModel.save() }
+                        }
+                    }
+            )
+            .onChange(of: isHoldAndDragActive) { _, active in
+                if !active {
+                    // Reset if the gesture cancelled mid-way (e.g. lifted finger early)
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) {
+                        isLifted = false
+                    }
+                    isDraggingReorder = false
+                    isAutoScrollingLeft = false
+                    isAutoScrollingRight = false
+                    
+                    if viewModel.draggedClipID != nil {
                         viewModel.draggedClipID = nil
                         dragReorderTranslation = 0
                         currentDragTranslation = 0
                         accumulatedAutoScroll = 0
-                        Task { await viewModel.rebuildComposition(); viewModel.save() }
+                        viewModel.cleanupEmptyTracks()
                     }
-            )
+                }
+            }
             
             // ── Trim Handles (high-priority drag, only when selected) ───────
-            if isSelected {
+            if isSelected && !isLifted {
                 HStack(spacing: 0) {
                     // Left Handle
                     ZStack {
@@ -396,10 +479,12 @@ struct TimelineClipView: View {
                 }
             }
         }
-        .frame(width: max(0, currentWidth), height: max(trackHeight - 4, 10))
-        .offset(x: baseOffset + dragOffsetLeft)
-        .scaleEffect(isDragged ? 1.05 : 1.0)
-        .zIndex(isDragged ? 100 : 0)
+        .padding(.trailing, 2)
+        .frame(width: displayWidth, height: max(trackHeight - 4, 10))
+        .offset(x: baseOffset + dragOffsetLeft + visualOffset)
+        .scaleEffect(isLifted ? 1.05 : 1.0)
+        .shadow(color: isLifted ? .black.opacity(0.5) : .clear, radius: isLifted ? 8 : 0, x: 0, y: isLifted ? 5 : 0)
+        .zIndex(isLifted ? 100 : (isDragged ? 50 : (isSelected ? 20 : 0)))
         .animation(.spring(response: 0.3, dampingFraction: 0.7), value: isDragged)
         .animation(.spring(response: 0.3, dampingFraction: 0.7), value: clip.startTime)
         .animation(nil, value: dragOffsetLeft)
@@ -422,14 +507,20 @@ struct TimelineClipView: View {
             else if isAutoScrollingRight { direction = 1 }
             else { return }
             
-            accumulatedAutoScroll += direction * 20
+            let scrollSpeed: CGFloat = 20
+            accumulatedAutoScroll += direction * scrollSpeed
+            
+            // Smoothly scroll the timeline independent of the clip's exact position
+            let newTime = viewModel.currentTime + (direction * scrollSpeed / pointsPerSecond)
+            viewModel.currentTime = max(0, newTime)
+            viewModel.syncScroll()
             
             if isDraggingLeft {
                 updateTrimLeft()
             } else if isDraggingRight {
                 updateTrimRight()
             } else if isDraggingReorder {
-                updateReorder()
+                updateReorder(translationHeight: currentDragTranslationHeight)
             }
         }
     }

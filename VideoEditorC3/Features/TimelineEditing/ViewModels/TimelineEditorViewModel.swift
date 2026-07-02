@@ -46,6 +46,41 @@ class TimelineEditorViewModel {
     var canUndo: Bool { !undoStack.isEmpty }
     var canRedo: Bool { !redoStack.isEmpty }
     
+    var availableTracks: [Int] {
+        var tracks = Set(timeline.clips.map { $0.trackType })
+        tracks.insert(0)
+        return tracks.sorted()
+    }
+    
+    func moveClip(id: UUID, toTrack: Int) {
+        if let index = timeline.clips.firstIndex(where: { $0.id == id }) {
+            timeline.clips[index].trackType = toTrack
+        }
+    }
+    
+    func cleanupEmptyTracks() {
+        let currentTracks = Array(Set(timeline.clips.map { $0.trackType })).sorted()
+        
+        var newTrackMapping: [Int: Int] = [:]
+        var nextAvailableIndex = 1
+        
+        for track in currentTracks {
+            if track == 0 {
+                newTrackMapping[0] = 0
+            } else {
+                newTrackMapping[track] = nextAvailableIndex
+                nextAvailableIndex += 1
+            }
+        }
+        
+        for i in 0..<timeline.clips.count {
+            let oldTrack = timeline.clips[i].trackType
+            if let newTrack = newTrackMapping[oldTrack], newTrack != oldTrack {
+                timeline.clips[i].trackType = newTrack
+            }
+        }
+    }
+    
     func snapshotForUndo() {
         undoStack.append(timeline)
         if undoStack.count > 10 {
@@ -182,7 +217,7 @@ class TimelineEditorViewModel {
         let videoTrack = newComposition.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid)
         let audioTrack = newComposition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid)
         
-        let videoClips = timeline.clips.filter { $0.trackType == .video }.sorted { $0.startTime < $1.startTime }
+        let videoClips = timeline.clips.filter { $0.trackType == 0 }.sorted { $0.startTime < $1.startTime }
         
         for clip in videoClips {
             guard let url = clip.url else { continue }
@@ -238,6 +273,8 @@ class TimelineEditorViewModel {
         guard !items.isEmpty else { return }
         
         Task {
+            // Find the next available track (highest track + 1). If timeline is empty, starts at 0.
+            let targetTrackType = (timeline.clips.map { $0.trackType }.max() ?? -1) + 1
             var newClips: [Clip] = []
             for item in items {
                 do {
@@ -253,7 +290,7 @@ class TimelineEditorViewModel {
                         let duration = try await asset.load(.duration)
                         let seconds = duration.seconds
                         
-                        let existingMax = timeline.clips.filter { $0.trackType == .video }.map { $0.startTime + $0.duration }.max() ?? 0
+                        let existingMax = timeline.clips.filter { $0.trackType == targetTrackType }.map { $0.startTime + $0.duration }.max() ?? 0
                         let newMax = newClips.map { $0.startTime + $0.duration }.max() ?? 0
                         let startTime = max(existingMax, newMax)
                         
@@ -263,7 +300,7 @@ class TimelineEditorViewModel {
                             startTime: startTime,
                             duration: seconds,
                             color: .blue,
-                            trackType: .video,
+                            trackType: targetTrackType,
                             url: permanentURL,
                             assetDuration: seconds
                         )
@@ -277,7 +314,7 @@ class TimelineEditorViewModel {
             if !newClips.isEmpty {
                 self.snapshotForUndo()
                 self.timeline.clips.append(contentsOf: newClips)
-                self.rippleClips(for: .video)
+                self.rippleClips(for: targetTrackType)
                 Task { await self.rebuildComposition(); self.save() }
             }
         }
@@ -288,6 +325,8 @@ class TimelineEditorViewModel {
         guard !urls.isEmpty else { return }
         
         Task {
+            // Find the next available track (highest track + 1). If timeline is empty, starts at 0.
+            let targetTrackType = (timeline.clips.map { $0.trackType }.max() ?? -1) + 1
             var newClips: [Clip] = []
             for url in urls {
                 // Determine if we need to copy the file. For security-scoped URLs from file importer,
@@ -305,7 +344,7 @@ class TimelineEditorViewModel {
                     let asset = AVURLAsset(url: permanentURL)
                     let duration = try await asset.load(.duration).seconds
                     
-                    let existingMax = timeline.clips.filter { $0.trackType == .video }.map { $0.startTime + $0.duration }.max() ?? 0
+                    let existingMax = timeline.clips.filter { $0.trackType == targetTrackType }.map { $0.startTime + $0.duration }.max() ?? 0
                     let newMax = newClips.map { $0.startTime + $0.duration }.max() ?? 0
                     let startTime = max(existingMax, newMax)
                     
@@ -315,7 +354,7 @@ class TimelineEditorViewModel {
                         startTime: startTime,
                         duration: duration,
                         color: .blue,
-                        trackType: .video,
+                        trackType: targetTrackType,
                         url: permanentURL,
                         sourceStartTime: 0,
                         assetDuration: duration
@@ -330,7 +369,7 @@ class TimelineEditorViewModel {
                 if !newClips.isEmpty {
                     self.snapshotForUndo()
                     self.timeline.clips.append(contentsOf: newClips)
-                    self.rippleClips(for: .video)
+                    self.rippleClips(for: targetTrackType)
                     Task { await self.rebuildComposition(); self.save() }
                 }
             }
@@ -366,6 +405,27 @@ class TimelineEditorViewModel {
             let center1 = (clip1.id == clipID) ? virtualCenterX : ((clip1.startTime + (clip1.duration / 2)) * pointsPerSecond)
             let center2 = (clip2.id == clipID) ? virtualCenterX : ((clip2.startTime + (clip2.duration / 2)) * pointsPerSecond)
             return center1 < center2
+        }
+        
+        var currentOffset: TimeInterval = 0.0
+        for i in 0..<trackClips.count {
+            trackClips[i].startTime = currentOffset
+            currentOffset += trackClips[i].duration
+        }
+        
+        timeline.clips.removeAll(where: { $0.trackType == trackType })
+        timeline.clips.append(contentsOf: trackClips)
+    }
+    
+    func handleCompressedReorderDrag(clipID: UUID, trackType: TrackType, virtualCenterX: CGFloat, thumbWidth: CGFloat) {
+        var trackClips = timeline.clips.filter { $0.trackType == trackType }.sorted { $0.startTime < $1.startTime }
+        
+        let originalIndices = Dictionary(uniqueKeysWithValues: trackClips.enumerated().map { ($0.element.id, $0.offset) })
+        
+        trackClips.sort { clip1, clip2 in
+            let c1Center = (clip1.id == clipID) ? virtualCenterX : (CGFloat(originalIndices[clip1.id]!) * thumbWidth + thumbWidth / 2)
+            let c2Center = (clip2.id == clipID) ? virtualCenterX : (CGFloat(originalIndices[clip2.id]!) * thumbWidth + thumbWidth / 2)
+            return c1Center < c2Center
         }
         
         var currentOffset: TimeInterval = 0.0
@@ -414,6 +474,7 @@ class TimelineEditorViewModel {
             let trackType = timeline.clips[index].trackType
             timeline.clips.remove(at: index)
             rippleClips(for: trackType)
+            self.cleanupEmptyTracks()
             
             Task {
                 await self.rebuildComposition()

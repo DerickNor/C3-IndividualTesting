@@ -2,11 +2,7 @@ import Foundation
 import SwiftUI
 
 /// Represents the type of layer/track the clip belongs to.
-enum TrackType: String, CaseIterable, Codable {
-    case video = "Video"
-    case audio = "Audio"
-    case text = "Text"
-}
+typealias TrackType = Int
 
 /// Helper extension to serialize Color easily
 extension Color {
@@ -49,7 +45,7 @@ struct Clip: Identifiable, Hashable, Codable {
         case id, name, startTime, duration, colorHex, trackType, relativePath, sourceStartTime, assetDuration
     }
     
-    init(id: UUID = UUID(), name: String, startTime: TimeInterval, duration: TimeInterval, color: Color = .blue, trackType: TrackType = .video, url: URL? = nil, sourceStartTime: TimeInterval = 0.0, assetDuration: TimeInterval = 0.0) {
+    init(id: UUID = UUID(), name: String, startTime: TimeInterval, duration: TimeInterval, color: Color = .blue, trackType: TrackType = 0, url: URL? = nil, sourceStartTime: TimeInterval = 0.0, assetDuration: TimeInterval = 0.0) {
         self.id = id
         self.name = name
         self.startTime = startTime
@@ -67,7 +63,11 @@ struct Clip: Identifiable, Hashable, Codable {
         name = try container.decode(String.self, forKey: .name)
         startTime = try container.decode(TimeInterval.self, forKey: .startTime)
         duration = try container.decode(TimeInterval.self, forKey: .duration)
-        trackType = try container.decode(TrackType.self, forKey: .trackType)
+        if let _ = try? container.decode(String.self, forKey: .trackType) {
+            trackType = 0
+        } else {
+            trackType = try container.decode(TrackType.self, forKey: .trackType)
+        }
         relativePath = try container.decodeIfPresent(String.self, forKey: .relativePath)
         sourceStartTime = try container.decode(TimeInterval.self, forKey: .sourceStartTime)
         assetDuration = try container.decode(TimeInterval.self, forKey: .assetDuration)

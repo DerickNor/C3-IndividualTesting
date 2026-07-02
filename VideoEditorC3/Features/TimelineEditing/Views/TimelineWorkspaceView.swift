@@ -91,26 +91,90 @@ struct TimelineWorkspaceView: View {
             // 3. Timeline Scroller
             GeometryReader { geometry in
                 let halfWidth = geometry.size.width / 2
+                let viewMinHeight = geometry.size.height.isFinite ? max(10, geometry.size.height - 32) : 100.0
                 
-                ZStack(alignment: .top) {
+                ScrollView(.vertical, showsIndicators: true) {
+                    ZStack(alignment: .top) {
                     ScrollView(.horizontal, showsIndicators: false) {
-                        VStack(alignment: .leading, spacing: 4) { // 4pt gap separates Ruler from Clips
+                        VStack(alignment: .leading, spacing: 0) { // 0pt gap, using Spacer instead
                             // Ruler (Now acts as the header section)
                             TimelineRulerView(totalDuration: viewModel.timeline.totalDuration, pointsPerSecond: pointsPerSecond)
                                 .frame(height: 24)
-                            VStack(alignment: .leading, spacing: 8) {
-                                ForEach(TrackType.allCases, id: \.self) { trackType in
-                                    TrackRowView(
-                                        trackType: trackType,
-                                        viewModel: viewModel,
+                                .padding(.bottom, 4)
+                            
+                            Spacer()
+                            
+                            ZStack(alignment: .topLeading) {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    ForEach(viewModel.availableTracks, id: \.self) { trackType in
+                                        TrackRowView(
+                                            trackType: trackType,
+                                            viewModel: viewModel,
+                                            pointsPerSecond: pointsPerSecond,
+                                            trackHeight: trackHeight(for: trackType),
+                                            showingFileImporter: $showingFileImporter,
+                                            activeAddMenuTrack: $activeAddMenuTrack
+                                        )
+                                    }
+                                }
+                                
+                                // Global Clip Overlay
+                                ForEach(Array(viewModel.timeline.clips.enumerated()), id: \.element.id) { index, clip in
+                                    let th = trackHeight(for: clip.trackType)
+                                    let yOff = yOffset(for: clip.trackType)
+                                    
+                                    TimelineClipView(
+                                        clip: clip,
+                                        index: index,
                                         pointsPerSecond: pointsPerSecond,
-                                        trackHeight: trackHeight(for: trackType),
-                                        showingFileImporter: $showingFileImporter,
-                                        activeAddMenuTrack: $activeAddMenuTrack
+                                        trackHeight: th,
+                                        viewModel: viewModel
                                     )
+                                    .offset(y: yOff)
+                                    .animation(.spring(response: 0.3, dampingFraction: 0.7), value: clip.trackType)
+                                }
+                                
+                                // Global Transition Markers Overlay (On top of clips)
+                                if viewModel.draggedClipID == nil {
+                                    ForEach(viewModel.availableTracks, id: \.self) { trackType in
+                                        let trackClips = viewModel.timeline.clips.filter { $0.trackType == trackType }.sorted { $0.startTime < $1.startTime }
+                                        let yOff = yOffset(for: trackType)
+                                        let tHeight = trackHeight(for: trackType)
+                                        
+                                        ForEach(0..<trackClips.count, id: \.self) { i in
+                                            if i < trackClips.count - 1 {
+                                                let endTime = trackClips[i].startTime + trackClips[i].duration
+                                                let nextStartTime = trackClips[i+1].startTime
+                                                // Only show transition marker if the clips are exactly touching
+                                                if abs(endTime - nextStartTime) < 0.01 {
+                                                    ZStack {
+                                                        RoundedRectangle(cornerRadius: 4)
+                                                            .fill(Color.white)
+                                                            .frame(width: 20, height: 20)
+                                                            .shadow(color: .black.opacity(0.3), radius: 2, x: 0, y: 1)
+                                                        Image(systemName: "link")
+                                                            .font(.system(size: 12, weight: .bold))
+                                                            .foregroundColor(.black)
+                                                    }
+                                                    // yOff is the top of the track. Add half track height and subtract half marker height (10) to center it.
+                                                    .offset(x: endTime * pointsPerSecond - 10, y: yOff + (tHeight / 2) - 10)
+                                                    .zIndex(5)
+                                                }
+                                            }
+                                        }
+                                    }
                                 }
                             }
+                            
+                            Spacer()
                         }
+                        .frame(minHeight: viewMinHeight) // Use minHeight to allow vertical expansion
+                        .background(
+                            Color.black.opacity(0.001)
+                                .onTapGesture {
+                                    viewModel.selectedClipID = nil
+                                }
+                        )
                         .padding(.vertical, 16)
                         // This padding pushes the start of the timeline to the center of the screen
                         .padding(.horizontal, halfWidth)
@@ -155,53 +219,63 @@ struct TimelineWorkspaceView: View {
                         .shadow(color: .black.opacity(0.3), radius: 2)
                         // The playhead spans the height of the timeline area
                         .frame(maxHeight: .infinity)
-                        .padding(.top, 16) // Start from ruler level
+                        .padding(.top, 35) // Start exactly beneath the ruler
                         
                     // Fixed Add Buttons (Right aligned)
-                    VStack(alignment: .trailing, spacing: 8) {
-                        Spacer().frame(height: 35) // Adjusted upward slightly for optical alignment with the track
-                        ForEach(TrackType.allCases, id: \.self) { trackType in
-                            let trackHeight = trackHeight(for: trackType)
-                            let hasClips = !viewModel.timeline.clips.filter { $0.trackType == trackType }.isEmpty
-                            if hasClips {
-                                Button(action: {
-                                    activeAddMenuTrack = (activeAddMenuTrack == trackType) ? nil : trackType
-                                }) {
-                                    ZStack {
-                                        RoundedRectangle(cornerRadius: 6)
-                                            .fill(Color.white)
-                                            .frame(width: 26, height: 26)
-                                            .shadow(color: .black.opacity(0.3), radius: 2, x: 0, y: 1)
-                                        Image(systemName: "plus")
-                                            .font(.system(size: 14, weight: .bold))
-                                            .foregroundColor(.black)
+                    VStack(alignment: .trailing, spacing: 0) {
+                        // Dummy ruler space to match the timeline ruler height
+                        Spacer()
+                            .frame(height: 24)
+                            .padding(.bottom, 4)
+                        
+                        Spacer()
+                        
+                        VStack(alignment: .trailing, spacing: 4) {
+                            ForEach(viewModel.availableTracks, id: \.self) { trackType in
+                                let trackHeight = trackHeight(for: trackType)
+                                let hasClips = !viewModel.timeline.clips.filter { $0.trackType == trackType }.isEmpty
+                                if hasClips && trackType == 0 {
+                                    Button(action: {
+                                        activeAddMenuTrack = (activeAddMenuTrack == trackType) ? nil : trackType
+                                    }) {
+                                        ZStack {
+                                            RoundedRectangle(cornerRadius: 6)
+                                                .fill(Color.white)
+                                                .frame(width: 26, height: 26)
+                                                .shadow(color: .black.opacity(0.3), radius: 2, x: 0, y: 1)
+                                            Image(systemName: "plus")
+                                                .font(.system(size: 14, weight: .bold))
+                                                .foregroundColor(.black)
+                                        }
+                                        .frame(width: 44, height: trackHeight)
                                     }
-                                    .frame(width: 44, height: trackHeight)
-                                }
-                                .overlay(alignment: .leading) {
-                                    if activeAddMenuTrack == trackType {
-                                        TinyAddMenu(
-                                            actionPhoto: {
-                                                activeAddMenuTrack = nil
-                                                if trackType == .video { viewModel.isShowingVideoPicker = true }
-                                            },
-                                            actionFiles: {
-                                                activeAddMenuTrack = nil
-                                                if trackType == .video { showingFileImporter = true }
-                                            }
-                                        )
-                                        .offset(x: -140) // Place directly left of the + button
-                                        .zIndex(50)
+                                    .overlay(alignment: .leading) {
+                                        if activeAddMenuTrack == trackType {
+                                            TinyAddMenu(
+                                                actionPhoto: {
+                                                    activeAddMenuTrack = nil
+                                                    viewModel.isShowingVideoPicker = true
+                                                },
+                                                actionFiles: {
+                                                    activeAddMenuTrack = nil
+                                                    showingFileImporter = true
+                                                }
+                                            )
+                                            .offset(x: -140) // Place directly left of the + button
+                                            .zIndex(50)
+                                        }
                                     }
+                                } else {
+                                    // Empty space if this track has no clips to maintain vertical alignment
+                                    Spacer().frame(height: trackHeight)
                                 }
-                            } else {
-                                // Empty space if this track has no clips to maintain vertical alignment
-                                Spacer().frame(height: trackHeight)
                             }
                         }
+                        
                         Spacer()
                     }
                     .frame(maxWidth: .infinity, alignment: .trailing)
+                    .frame(minHeight: viewMinHeight)
                     
                     // Floating Total Time Badge (Top Left)
                     HStack {
@@ -230,6 +304,7 @@ struct TimelineWorkspaceView: View {
                     }
                     .padding(.top, 14) // Nudged up slightly for visual alignment
                 }
+                } // End of vertical ScrollView
                 .background(Color(.systemGray6))
                 .onTapGesture {
                     // Dismiss menu when tapping outside
@@ -274,20 +349,26 @@ struct TimelineWorkspaceView: View {
     
     // Determine the height of each track layer
     private func trackHeight(for type: TrackType) -> CGFloat {
-        switch type {
-        case .video:
+        if type == 0 {
             return 60
-        case .audio:
-            return 45
-        case .text:
-            return 35
+        } else {
+            return 45 // Overlay tracks are slightly smaller
         }
+    }
+    
+    // Calculate the absolute Y offset for a given track index
+    func yOffset(for type: TrackType) -> CGFloat {
+        let spacing: CGFloat = 4
+        var offset: CGFloat = 0
+        for i in 0..<type {
+            offset += trackHeight(for: i) + spacing
+        }
+        return offset
     }
     
     @ViewBuilder
     private func trackIcon(for type: TrackType) -> some View {
-        switch type {
-        case .video:
+        if type == 0 {
             Button(action: {
                 viewModel.isMuted.toggle()
             }) {
@@ -295,14 +376,10 @@ struct TimelineWorkspaceView: View {
                     .foregroundColor(.white)
                     .font(.system(size: 12, weight: .bold))
             }
-        case .audio:
-            Image(systemName: "waveform")
+        } else {
+            Image(systemName: "square.on.square.dashed")
                 .foregroundColor(.white)
-                .font(.system(size: 14, weight: .bold))
-        case .text:
-            Image(systemName: "textformat")
-                .foregroundColor(.white)
-                .font(.system(size: 14, weight: .bold))
+                .font(.system(size: 12, weight: .bold))
         }
     }
 }
@@ -369,26 +446,20 @@ struct TrackRowView: View {
         ownMaxTime * pointsPerSecond + addButtonGap + addButtonWidth
     }
 
+    @ViewBuilder
     private var trackIcon: some View {
-        Group {
-            switch trackType {
-            case .video:
-                Button(action: {
-                    viewModel.isMuted.toggle()
-                }) {
-                    Image(systemName: viewModel.isMuted ? "speaker.slash.fill" : "speaker.wave.2.fill")
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundColor(.white)
-                }
-            case .audio:
-                Image(systemName: "waveform")
-                    .font(.system(size: 12))
-                    .foregroundColor(.white)
-            case .text:
-                Image(systemName: "textformat")
-                    .font(.system(size: 12))
+        if trackType == 0 {
+            Button(action: {
+                viewModel.isMuted.toggle()
+            }) {
+                Image(systemName: viewModel.isMuted ? "speaker.slash.fill" : "speaker.wave.2.fill")
+                    .font(.system(size: 11, weight: .bold))
                     .foregroundColor(.white)
             }
+        } else {
+            Image(systemName: "square.on.square.dashed")
+                .foregroundColor(.white)
+                .font(.system(size: 11, weight: .bold))
         }
     }
 
@@ -409,41 +480,14 @@ struct TrackRowView: View {
                 Rectangle()
                     .fill(Color(.systemGray5))
                     .frame(width: trackWidth, height: trackHeight)
-                    .onTapGesture {
-                        viewModel.selectedClipID = nil
-                    }
             }
 
-            // Clips
-            ForEach(trackClips) { clip in
-                TimelineClipView(
-                    clip: clip,
-                    pointsPerSecond: pointsPerSecond,
-                    trackHeight: trackHeight,
-                    viewModel: viewModel
-                )
-            }
+            // Clips are now rendered globally in TimelineWorkspaceView to preserve identity during cross-track drag
             
-            // Transition markers (link chain) between scenes
-            ForEach(0..<trackClips.count, id: \.self) { i in
-                if i < trackClips.count - 1 {
-                    let linkTime = trackClips[i].startTime + trackClips[i].duration
-                    ZStack {
-                        RoundedRectangle(cornerRadius: 4)
-                            .fill(Color.white)
-                            .frame(width: 20, height: 20)
-                            .shadow(color: .black.opacity(0.3), radius: 2, x: 0, y: 1)
-                        Image(systemName: "link")
-                            .font(.system(size: 12, weight: .bold))
-                            .foregroundColor(.black)
-                    }
-                    .offset(x: linkTime * pointsPerSecond - 10)
-                    .zIndex(10)
-                }
-            }
+            // Transition markers are now rendered globally above the clips
 
-            // Add button placed immediately after last clip
-            if trackClips.isEmpty {
+            // Add button placeholder when track is empty
+            if trackType == 0 && trackClips.isEmpty {
                 HStack(spacing: 0) {
                     Spacer()
                         .frame(width: ownMaxTime * pointsPerSecond + addButtonGap)
@@ -460,7 +504,7 @@ struct TrackRowView: View {
                             HStack(spacing: 4) {
                                 Image(systemName: "plus")
                                     .font(.system(size: 14, weight: .bold))
-                                Text(trackType == .video ? "Add Scene" : (trackType == .audio ? "Add Audio" : "Add Text"))
+                                Text("Add Scene")
                                     .font(.system(size: 12, weight: .semibold))
                             }
                             .foregroundColor(.gray)
@@ -473,11 +517,11 @@ struct TrackRowView: View {
                             TinyAddMenu(
                                 actionPhoto: {
                                     activeAddMenuTrack = nil
-                                    if trackType == .video { viewModel.isShowingVideoPicker = true }
+                                    viewModel.isShowingVideoPicker = true
                                 },
                                 actionFiles: {
                                     activeAddMenuTrack = nil
-                                    if trackType == .video { showingFileImporter = true }
+                                    showingFileImporter = true
                                 }
                             )
                             .offset(y: -80) // Centered cleanly above the block button
@@ -488,6 +532,7 @@ struct TrackRowView: View {
                 .animation(nil, value: ownMaxTime)
             }
         }
+        .frame(height: trackHeight)
         .animation(nil, value: trackWidth)
     }
 }

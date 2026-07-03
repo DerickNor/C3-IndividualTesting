@@ -467,6 +467,66 @@ class TimelineEditorViewModel {
         }
     }
     
+    /// Splits the **selected** clip at the playhead position (`time`) into two clips with a small gap between them.
+    /// Does nothing if no clip is selected or the playhead is not inside the selected clip.
+    @MainActor
+    func splitClip(at time: TimeInterval) {
+        // Only split the clip that the user has explicitly selected
+        guard let selectedID = selectedClipID,
+              let index = timeline.clips.firstIndex(where: { $0.id == selectedID }) else { return }
+
+        let original = timeline.clips[index]
+
+        // Playhead must be inside the selected clip
+        guard time > original.startTime + 0.1,
+              time < original.startTime + original.duration - 0.1 else { return }
+
+        // Duration of each half
+        let leftDuration  = time - original.startTime
+        let rightDuration = original.duration - leftDuration
+
+        // Gap between the two resulting clips (in seconds) — 0 keeps clips time-adjacent
+        // so the blockchain connector icon still appears. Visual gap is handled by clip padding.
+        let gap: TimeInterval = 0
+
+        snapshotForUndo()
+
+        // Left clip — same start position, truncated duration
+        var leftClip = original
+        leftClip.duration = leftDuration
+
+        // Right clip — offset by gap, picks up where source left off
+        let rightClip = Clip(
+            id: UUID(),
+            name: original.name + " (2)",
+            startTime: original.startTime + leftDuration + gap,
+            duration: rightDuration,
+            color: original.color,
+            trackType: original.trackType,
+            url: original.url,
+            sourceStartTime: original.sourceStartTime + leftDuration,
+            assetDuration: original.assetDuration
+        )
+
+        // Replace the original with the two new clips
+        timeline.clips.remove(at: index)
+        timeline.clips.append(leftClip)
+        timeline.clips.append(rightClip)
+
+        // Re-sort and ripple so clips stay back-to-back (gap = 0 keeps chain link intact)
+        rippleClips(for: original.trackType)
+
+        // Keep left clip selected after split
+        selectedClipID = leftClip.id
+
+        Task {
+            await self.rebuildComposition()
+            self.save()
+            // Keep playhead at the split point
+            self.scrub(to: time, exact: true)
+        }
+    }
+
     @MainActor
     func deleteClip(id: UUID) {
         if let index = timeline.clips.firstIndex(where: { $0.id == id }) {

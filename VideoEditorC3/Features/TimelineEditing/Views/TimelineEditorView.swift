@@ -38,6 +38,7 @@ struct TimelineEditorView: View {
     @State private var selectedTab: EditorTool = .edit
     @State private var activeTooltip: EditorTool? = nil
     @State private var showDeleteAlert = false
+    @State private var showSplitFeedback = false
     
     @Environment(\.dismiss) private var dismiss
     
@@ -64,6 +65,13 @@ struct TimelineEditorView: View {
                 }
             )
             
+            // Split flash overlay — briefly appears when a cut is performed
+            if showSplitFeedback {
+                Color.white.opacity(0.18)
+                    .ignoresSafeArea()
+                    .allowsHitTesting(false)
+                    .transition(.opacity)
+            }
 
         }
         .alert("Hapus Scene?", isPresented: $showDeleteAlert) {
@@ -88,8 +96,6 @@ struct TimelineEditorView: View {
                     HStack(spacing: 4) {
                         Image(systemName: "chevron.backward")
                             .font(.system(size: 17, weight: .semibold))
-                        Text("Back")
-                            .font(.system(size: 17))
                     }
                 }
             }
@@ -131,7 +137,10 @@ struct TimelineEditorView: View {
                     }
                     
                     Menu {
-                        Button(action: { selectedTab = .edit; withAnimation { activeTooltip = nil } }) {
+                        Button(action: {
+                            withAnimation { activeTooltip = nil }
+                            performSplit()
+                        }) {
                             Label("Split", systemImage: "scissors.badge.ellipsis")
                         }
                         Button(action: { selectedTab = .edit; withAnimation { activeTooltip = nil } }) {
@@ -171,6 +180,36 @@ struct TimelineEditorView: View {
                 }
                 
                 Spacer()
+            }
+        }
+    }
+    
+    // MARK: - Split Action
+    private func performSplit() {
+        let splitTime = viewModel.currentTime
+
+        // Hanya boleh split jika ada scene yang dipilih
+        guard let selectedID = viewModel.selectedClipID,
+              let selectedClip = viewModel.timeline.clips.first(where: { $0.id == selectedID }) else { return }
+
+        // Playhead harus berada di dalam clip yang dipilih
+        guard splitTime > selectedClip.startTime + 0.1,
+              splitTime < selectedClip.startTime + selectedClip.duration - 0.1 else { return }
+
+        
+        // Haptic feedback
+        let generator = UIImpactFeedbackGenerator(style: .medium)
+        generator.impactOccurred()
+        
+        viewModel.splitClip(at: splitTime)
+        
+        // Brief visual flash to confirm split
+        withAnimation(.easeIn(duration: 0.05)) {
+            showSplitFeedback = true
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+            withAnimation(.easeOut(duration: 0.2)) {
+                showSplitFeedback = false
             }
         }
     }
@@ -479,7 +518,7 @@ struct TimelineClipView: View {
                 }
             }
         }
-        .padding(.trailing, 2)
+        .padding(.trailing, 6)
         .frame(width: displayWidth, height: max(trackHeight - 4, 10))
         .offset(x: baseOffset + dragOffsetLeft + visualOffset)
         .scaleEffect(isLifted ? 1.05 : 1.0)

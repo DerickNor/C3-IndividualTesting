@@ -10,6 +10,7 @@ struct TimelineWorkspaceView: View {
     @State private var wasPlayingBeforeScroll = false
     @State private var showingFileImporter = false
     @State private var activeAddMenuTrack: TrackType? = nil
+    @State private var isFullscreen = false
     
     var body: some View {
         VStack(spacing: 0) {
@@ -21,29 +22,33 @@ struct TimelineWorkspaceView: View {
                 ZStack {
                     Color.black
                     
-                    // Placeholder for AVPlayer
                     // Native AVPlayer without default controls
                     AVPlayerView(player: viewModel.player)
                 }
                 .aspectRatio(viewModel.project.canvasSize.aspectRatio, contentMode: .fit)
                 .clipped()
+                // Fullscreen button sits inside the canvas, bottom-left corner
+                .overlay(alignment: .bottomLeading) {
+                    Button(action: {
+                        isFullscreen = true
+                    }) {
+                        Image(systemName: "arrow.up.left.and.arrow.down.right")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundColor(.white)
+                            .padding(7)
+                            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 7))
+                    }
+                    .padding(10)
+                }
             }
             .frame(height: 350)
+            .fullScreenCover(isPresented: $isFullscreen) {
+                FullscreenPlayerView(viewModel: viewModel, isPresented: $isFullscreen)
+            }
             
             // 2. Toolbar & Controls
             ZStack(alignment: .center) {
-                // Left: Fullscreen Canvas
-                HStack {
-                    Button(action: {
-                        // Fullscreen preview
-                    }) {
-                        Image(systemName: "arrow.up.left.and.arrow.down.right")
-                            .font(.system(size: 20))
-                            .foregroundColor(.primary)
-                            .frame(width: 25, height: 25)
-                    }
-                    Spacer()
-                }
+                // (Fullscreen button moved to bottom-left of preview area above)
                 
                 // Center: Play / Pause
                 Button(action: {
@@ -156,8 +161,9 @@ struct TimelineWorkspaceView: View {
                                                             .font(.system(size: 12, weight: .bold))
                                                             .foregroundColor(.black)
                                                     }
-                                                    // yOff is the top of the track. Add half track height and subtract half marker height (10) to center it.
-                                                    .offset(x: endTime * pointsPerSecond - 10, y: yOff + (tHeight / 2) - 10)
+                                                     // Center the 20×20 marker in the 6px visual gap between clips:
+                                                     // visual gap center = endTime*pps - 3, icon half-width = 10 → offset = -13
+                                                     .offset(x: endTime * pointsPerSecond - 13, y: yOff + (tHeight / 2) - 10)
                                                     .zIndex(5)
                                                 }
                                             }
@@ -217,10 +223,10 @@ struct TimelineWorkspaceView: View {
                         .fill(Color.white)
                         .frame(width: 2)
                         .shadow(color: .black.opacity(0.3), radius: 2)
-                        // The playhead spans the height of the timeline area
                         .frame(maxHeight: .infinity)
                         .padding(.top, 35) // Start exactly beneath the ruler
                         
+
                     // Fixed Add Buttons (Right aligned)
                     VStack(alignment: .trailing, spacing: 0) {
                         // Dummy ruler space to match the timeline ruler height
@@ -277,32 +283,7 @@ struct TimelineWorkspaceView: View {
                     .frame(maxWidth: .infinity, alignment: .trailing)
                     .frame(minHeight: viewMinHeight)
                     
-                    // Floating Total Time Badge (Top Left)
-                    HStack {
-                        VStack(spacing: 2) {
-                            Text("\(formatTimeWithoutMs(viewModel.currentTime)) / \(formatTimeWithoutMs(viewModel.timeline.totalDuration))")
-                                .font(.system(size: 10, weight: .medium, design: .monospaced))
-                                .foregroundColor(.secondary)
-                            Spacer()
-                        }
-                        .padding(.leading, 12)
-                        .padding(.trailing, 32) // Extra width for smooth gradient fade
-                        .frame(height: 24) // Match Ruler height exactly
-                        .background(
-                            LinearGradient(
-                                gradient: Gradient(stops: [
-                                    .init(color: Color(.systemGray6), location: 0),
-                                    .init(color: Color(.systemGray6), location: 0.75),
-                                    .init(color: Color(.systemGray6).opacity(0), location: 1)
-                                ]),
-                                startPoint: .leading,
-                                endPoint: .trailing
-                            )
-                        )
-                        
-                        Spacer()
-                    }
-                    .padding(.top, 14) // Nudged up slightly for visual alignment
+                    // (Time badge moved outside ScrollView — see overlay below)
                 }
                 } // End of vertical ScrollView
                 .background(Color(.systemGray6))
@@ -313,6 +294,30 @@ struct TimelineWorkspaceView: View {
                             activeAddMenuTrack = nil
                         }
                     }
+                }
+                // Fixed Time Badge — always stays at top-left, perfectly aligned with the ruler
+                .overlay(alignment: .topLeading) {
+                    HStack(spacing: 0) {
+                        Text("\(formatTimeWithoutMs(viewModel.currentTime)) / \(formatTimeWithoutMs(viewModel.timeline.totalDuration))")
+                            .font(.system(size: 10, weight: .medium, design: .monospaced))
+                            .foregroundColor(.secondary)
+                            .frame(height: 30) // Time Badge Frame
+                            .padding(.leading, 12)
+                            .padding(.trailing, 32)
+                            .background(
+                                LinearGradient(
+                                    gradient: Gradient(stops: [
+                                        .init(color: Color(.systemGray6), location: 0),
+                                        .init(color: Color(.systemGray6), location: 0.75),
+                                        .init(color: Color(.systemGray6).opacity(0), location: 1)
+                                    ]),
+                                    startPoint: .leading,
+                                    endPoint: .trailing
+                                )
+                            )
+                        Spacer()
+                    }
+                    .padding(.top, 6) // Matches the .padding(.vertical, 16) on the timeline content
                 }
             }
         }
@@ -592,3 +597,173 @@ struct DimmingButtonStyle: ButtonStyle {
             .animation(.easeInOut(duration: 0.1), value: configuration.isPressed)
     }
 }
+
+// MARK: - Fullscreen Player
+
+struct FullscreenPlayerView: View {
+    @Bindable var viewModel: TimelineEditorViewModel
+    @Binding var isPresented: Bool
+
+    @State private var isPlaying: Bool = false
+    @State private var currentTime: Double = 0
+    @State private var duration: Double = 1
+    @State private var isDraggingSlider = false
+    @State private var showControls = true
+    @State private var hideControlsTask: Task<Void, Never>? = nil
+    @State private var timeObserver: Any? = nil
+
+    var body: some View {
+        ZStack {
+            Color.black.ignoresSafeArea()
+
+            AVPlayerView(player: viewModel.player)
+                .ignoresSafeArea()
+                .onTapGesture { toggleControls() }
+
+            if showControls {
+                VStack {
+                    // Top: Close button
+                    HStack {
+                        Spacer()
+                        Button(action: { isPresented = false }) {
+                            Image(systemName: "xmark")
+                                .font(.system(size: 16, weight: .bold))
+                                .foregroundColor(.white)
+                                .padding(10)
+                                .background(.ultraThinMaterial, in: Circle())
+                        }
+                        .padding(.trailing, 20)
+                        .padding(.top, 16)
+                    }
+
+                    Spacer()
+
+                    // Bottom: controls
+                    VStack(spacing: 12) {
+                        // Progress bar
+                        Slider(
+                            value: Binding(
+                                get: { currentTime },
+                                set: { val in
+                                    currentTime = val
+                                    viewModel.scrub(to: val, exact: false)
+                                    resetHideTimer()
+                                }
+                            ),
+                            in: 0...max(duration, 0.01)
+                        )
+                        .tint(.white)
+
+                        // Time labels + Play button
+                        HStack(spacing: 16) {
+                            Text(formatTime(currentTime))
+                                .font(.system(size: 13, weight: .medium, design: .monospaced))
+                                .foregroundColor(.white)
+
+                            Spacer()
+
+                            Button(action: {
+                                viewModel.togglePlayback()
+                                isPlaying = viewModel.isPlaying
+                                resetHideTimer()
+                            }) {
+                                Image(systemName: isPlaying ? "pause.fill" : "play.fill")
+                                    .font(.system(size: 24, weight: .bold))
+                                    .foregroundColor(.white)
+                                    .frame(width: 52, height: 52)
+                                    .background(.ultraThinMaterial, in: Circle())
+                            }
+
+                            Spacer()
+
+                            Text(formatTime(duration))
+                                .font(.system(size: 13, weight: .medium, design: .monospaced))
+                                .foregroundColor(.white.opacity(0.6))
+                        }
+                    }
+                    .padding(.horizontal, 24)
+                    .padding(.bottom, 40)
+                    .background(
+                        LinearGradient(
+                            colors: [.clear, .black.opacity(0.75)],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                        .frame(height: 180)
+                        .allowsHitTesting(false),
+                        alignment: .bottom
+                    )
+                }
+                .transition(.opacity)
+                .animation(.easeInOut(duration: 0.2), value: showControls)
+            }
+        }
+        .preferredColorScheme(.dark)
+        .onAppear {
+            syncState()
+            startTimeObserver()
+            scheduleHideControls()
+        }
+        .onDisappear {
+            stopTimeObserver()
+            hideControlsTask?.cancel()
+        }
+    }
+
+    private func toggleControls() {
+        withAnimation { showControls.toggle() }
+        if showControls { resetHideTimer() }
+    }
+
+    private func resetHideTimer() {
+        hideControlsTask?.cancel()
+        scheduleHideControls()
+    }
+
+    private func scheduleHideControls() {
+        hideControlsTask = Task {
+            try? await Task.sleep(for: .seconds(3))
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                if !isDraggingSlider {
+                    withAnimation { showControls = false }
+                }
+            }
+        }
+    }
+
+    private func syncState() {
+        isPlaying = viewModel.isPlaying
+        currentTime = viewModel.currentTime
+        if let item = viewModel.player.currentItem {
+            let d = item.duration.seconds
+            duration = d.isFinite && d > 0 ? d : viewModel.timeline.totalDuration
+        } else {
+            duration = viewModel.timeline.totalDuration
+        }
+    }
+
+    private func startTimeObserver() {
+        let interval = CMTime(seconds: 1.0 / 30.0, preferredTimescale: 600)
+        timeObserver = viewModel.player.addPeriodicTimeObserver(forInterval: interval, queue: .main) { time in
+            guard !isDraggingSlider else { return }
+            currentTime = time.seconds.isFinite ? time.seconds : 0
+            isPlaying = viewModel.player.rate > 0
+        }
+    }
+
+    private func stopTimeObserver() {
+        if let obs = timeObserver {
+            viewModel.player.removeTimeObserver(obs)
+            timeObserver = nil
+        }
+    }
+
+    private func formatTime(_ t: Double) -> String {
+        guard t.isFinite else { return "00:00" }
+        let m = Int(t) / 60
+        let s = Int(t) % 60
+        return String(format: "%02d:%02d", m, s)
+    }
+}
+

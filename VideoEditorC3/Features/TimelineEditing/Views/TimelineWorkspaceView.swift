@@ -9,6 +9,7 @@ struct TimelineWorkspaceView: View {
     @State private var scrollPosition = ScrollPosition(edge: .leading)
     @State private var wasPlayingBeforeScroll = false
     @State private var showingFileImporter = false
+    @State private var showingAudioImporter = false
     @State private var activeAddMenuTrack: TrackType? = nil
     @State private var isFullscreen = false
     
@@ -118,58 +119,15 @@ struct TimelineWorkspaceView: View {
                                             pointsPerSecond: pointsPerSecond,
                                             trackHeight: trackHeight(for: trackType),
                                             showingFileImporter: $showingFileImporter,
+                                            showingAudioImporter: $showingAudioImporter,
                                             activeAddMenuTrack: $activeAddMenuTrack
                                         )
                                     }
                                 }
                                 
-                                // Global Clip Overlay
-                                ForEach(Array(viewModel.timeline.clips.enumerated()), id: \.element.id) { index, clip in
-                                    let th = trackHeight(for: clip.trackType)
-                                    let yOff = yOffset(for: clip.trackType)
-                                    
-                                    TimelineClipView(
-                                        clip: clip,
-                                        index: index,
-                                        pointsPerSecond: pointsPerSecond,
-                                        trackHeight: th,
-                                        viewModel: viewModel
-                                    )
-                                    .offset(y: yOff)
-                                    .animation(.spring(response: 0.3, dampingFraction: 0.7), value: clip.trackType)
-                                }
+                                timelineClips
                                 
-                                // Global Transition Markers Overlay (On top of clips)
-                                if viewModel.draggedClipID == nil {
-                                    ForEach(viewModel.availableTracks, id: \.self) { trackType in
-                                        let trackClips = viewModel.timeline.clips.filter { $0.trackType == trackType }.sorted { $0.startTime < $1.startTime }
-                                        let yOff = yOffset(for: trackType)
-                                        let tHeight = trackHeight(for: trackType)
-                                        
-                                        ForEach(0..<trackClips.count, id: \.self) { i in
-                                            if i < trackClips.count - 1 {
-                                                let endTime = trackClips[i].startTime + trackClips[i].duration
-                                                let nextStartTime = trackClips[i+1].startTime
-                                                // Only show transition marker if the clips are exactly touching
-                                                if abs(endTime - nextStartTime) < 0.01 {
-                                                    ZStack {
-                                                        RoundedRectangle(cornerRadius: 4)
-                                                            .fill(Color.white)
-                                                            .frame(width: 20, height: 20)
-                                                            .shadow(color: .black.opacity(0.3), radius: 2, x: 0, y: 1)
-                                                        Image(systemName: "link")
-                                                            .font(.system(size: 12, weight: .bold))
-                                                            .foregroundColor(.black)
-                                                    }
-                                                     // Center the 20×20 marker in the 6px visual gap between clips:
-                                                     // visual gap center = endTime*pps - 3, icon half-width = 10 → offset = -13
-                                                     .offset(x: endTime * pointsPerSecond - 13, y: yOff + (tHeight / 2) - 10)
-                                                    .zIndex(5)
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
+                                transitionMarkers
                             }
                             
                             Spacer()
@@ -332,7 +290,15 @@ struct TimelineWorkspaceView: View {
             case .success(let urls):
                 viewModel.addVideoClips(fromURLs: urls)
             case .failure(let error):
-                print("Error selecting files: \(error.localizedDescription)")
+                print("Error selecting video files: \(error.localizedDescription)")
+            }
+        }
+        .fileImporter(isPresented: $showingAudioImporter, allowedContentTypes: [.audio, .mp3, .wav, .mpeg4Audio], allowsMultipleSelection: true) { result in
+            switch result {
+            case .success(let urls):
+                viewModel.addAudioClips(fromURLs: urls)
+            case .failure(let error):
+                print("Error selecting audio files: \(error.localizedDescription)")
             }
         }
     }
@@ -387,383 +353,58 @@ struct TimelineWorkspaceView: View {
                 .font(.system(size: 12, weight: .bold))
         }
     }
-}
 
-
-// The ruler view showing seconds
-struct TimelineRulerView: View {
-    let totalDuration: TimeInterval
-    let pointsPerSecond: CGFloat
-    
-    var body: some View {
-        let width = totalDuration * pointsPerSecond
-        let seconds = Int(totalDuration)
-        
-        ZStack(alignment: .leading) {
-            ForEach(Array(stride(from: 0, through: seconds, by: 2)), id: \.self) { second in
-                VStack(spacing: 2) {
-                    Text(formatTimeWithoutMs(TimeInterval(second)))
-                        .font(.system(size: 10, weight: .medium, design: .monospaced))
-                        .foregroundColor(.secondary)
-                    Rectangle()
-                        .fill(Color.gray)
-                        .frame(width: 1, height: 6)
-                    Spacer()
-                }
-                .frame(width: 40) // Give text room to breathe
-                .offset(x: CGFloat(second) * pointsPerSecond - 20)
-            }
+    @ViewBuilder
+    private var timelineClips: some View {
+        // Global Clip Overlay
+        ForEach(Array(viewModel.timeline.clips.enumerated()), id: \.element.id) { index, clip in
+            let th = trackHeight(for: clip.trackType)
+            let yOff = yOffset(for: clip.trackType)
+            
+            TimelineClipView(
+                clip: clip,
+                index: index,
+                pointsPerSecond: pointsPerSecond,
+                trackHeight: th,
+                viewModel: viewModel
+            )
+            .offset(y: yOff)
+            .animation(.spring(response: 0.3, dampingFraction: 0.7), value: clip.trackType)
         }
-        .frame(width: width, alignment: .leading)
-    }
-    
-    private func formatTimeWithoutMs(_ time: TimeInterval) -> String {
-        let minutes = Int(time) / 60
-        let seconds = Int(time) % 60
-        return String(format: "%02d:%02d", minutes, seconds)
-    }
-}
-
-// Isolated track row — each instance only sees its own trackType clips.
-// Audio and Text rows are completely unaffected by Video clip changes.
-struct TrackRowView: View {
-    let trackType: TrackType
-    let viewModel: TimelineEditorViewModel
-    let pointsPerSecond: CGFloat
-    let trackHeight: CGFloat
-    
-    @Binding var showingFileImporter: Bool
-    @Binding var activeAddMenuTrack: TrackType?
-    private var trackClips: [Clip] {
-        viewModel.timeline.clips.filter { $0.trackType == trackType }.sorted { $0.startTime < $1.startTime }
-    }
-
-    // Only this track's own clips determine its width and Add button position
-    private var ownMaxTime: TimeInterval {
-        trackClips.map { $0.startTime + $0.duration }.max() ?? 0
-    }
-
-    private let addButtonWidth: CGFloat = 120
-    private var addButtonGap: CGFloat { ownMaxTime == 0 ? 0 : 8 }
-
-    // Background width = own clips + gap + Add button (never affected by other tracks)
-    private var trackWidth: CGFloat {
-        ownMaxTime * pointsPerSecond + addButtonGap + addButtonWidth
     }
 
     @ViewBuilder
-    private var trackIcon: some View {
-        if trackType == 0 {
-            Button(action: {
-                viewModel.isMuted.toggle()
-            }) {
-                Image(systemName: viewModel.isMuted ? "speaker.slash.fill" : "speaker.wave.2.fill")
-                    .font(.system(size: 11, weight: .bold))
-                    .foregroundColor(.white)
-            }
-        } else {
-            Image(systemName: "square.on.square.dashed")
-                .foregroundColor(.white)
-                .font(.system(size: 11, weight: .bold))
-        }
-    }
-
-    var body: some View {
-        ZStack(alignment: .leading) {
-            // Track icon badge (left of 00:00)
-            ZStack {
-                Circle()
-                    .fill(Color.black.opacity(0.6))
-                    .frame(width: 28, height: 28)
-                trackIcon
-            }
-            .offset(x: -48)
-            .zIndex(2)
-
-            // Gray background — exactly fits clips + Add button for THIS track only
-            if trackClips.isEmpty {
-                Rectangle()
-                    .fill(Color(.systemGray5))
-                    .frame(width: trackWidth, height: trackHeight)
-            }
-
-            // Clips are now rendered globally in TimelineWorkspaceView to preserve identity during cross-track drag
-            
-            // Transition markers are now rendered globally above the clips
-
-            // Add button placeholder when track is empty
-            if trackType == 0 && trackClips.isEmpty {
-                HStack(spacing: 0) {
-                    Spacer()
-                        .frame(width: ownMaxTime * pointsPerSecond + addButtonGap)
-                    
-                    Button(action: {
-                        activeAddMenuTrack = (activeAddMenuTrack == trackType) ? nil : trackType
-                    }) {
-                        ZStack {
-                            RoundedRectangle(cornerRadius: 6)
-                                .fill(Color.black.opacity(0.3))
-                            RoundedRectangle(cornerRadius: 6)
-                                .strokeBorder(style: StrokeStyle(lineWidth: 1, dash: [4]))
-                                .foregroundColor(.gray)
-                            HStack(spacing: 4) {
-                                Image(systemName: "plus")
-                                    .font(.system(size: 14, weight: .bold))
-                                Text("Add Scene")
-                                    .font(.system(size: 12, weight: .semibold))
+    private var transitionMarkers: some View {
+        // Global Transition Markers Overlay (On top of clips)
+        if viewModel.draggedClipID == nil {
+            ForEach(viewModel.availableTracks, id: \.self) { trackType in
+                let trackClips = viewModel.timeline.clips.filter { $0.trackType == trackType }.sorted { $0.startTime < $1.startTime }
+                let yOff = yOffset(for: trackType)
+                let tHeight = trackHeight(for: trackType)
+                
+                ForEach(0..<trackClips.count, id: \.self) { i in
+                    if i < trackClips.count - 1 {
+                        let endTime = trackClips[i].startTime + trackClips[i].duration
+                        let nextStartTime = trackClips[i+1].startTime
+                        // Only show transition marker if the clips are exactly touching
+                        if abs(endTime - nextStartTime) < 0.01 {
+                            ZStack {
+                                RoundedRectangle(cornerRadius: 4)
+                                    .fill(Color.white)
+                                    .frame(width: 20, height: 20)
+                                    .shadow(color: .black.opacity(0.3), radius: 2, x: 0, y: 1)
+                                Image(systemName: "link")
+                                    .font(.system(size: 12, weight: .bold))
+                                    .foregroundColor(.black)
                             }
-                            .foregroundColor(.gray)
-                        }
-                        .frame(width: addButtonWidth, height: trackHeight - 4)
-                    }
-                    .buttonStyle(DimmingButtonStyle())
-                    .overlay(alignment: .top) {
-                        if activeAddMenuTrack == trackType {
-                            TinyAddMenu(
-                                actionPhoto: {
-                                    activeAddMenuTrack = nil
-                                    viewModel.isShowingVideoPicker = true
-                                },
-                                actionFiles: {
-                                    activeAddMenuTrack = nil
-                                    showingFileImporter = true
-                                }
-                            )
-                            .offset(y: -80) // Centered cleanly above the block button
-                            .zIndex(50)
+                             // Center the 20×20 marker in the 6px visual gap between clips:
+                             // visual gap center = endTime*pps - 3, icon half-width = 10 → offset = -13
+                             .offset(x: endTime * pointsPerSecond - 13, y: yOff + (tHeight / 2) - 10)
+                            .zIndex(5)
                         }
                     }
                 }
-                .animation(nil, value: ownMaxTime)
             }
         }
-        .frame(height: trackHeight)
-        .animation(nil, value: trackWidth)
     }
 }
-
-struct TinyAddMenu: View {
-    let actionPhoto: () -> Void
-    let actionFiles: () -> Void
-    
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Button(action: actionPhoto) {
-                HStack(spacing: 6) {
-                    Image(systemName: "photo.on.rectangle")
-                        .font(.system(size: 12))
-                    Text("Photo Album")
-                        .font(.system(size: 12, weight: .medium))
-                    Spacer()
-                }
-                .padding(.horizontal, 10)
-                .frame(height: 32)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            
-            Divider()
-            
-            Button(action: actionFiles) {
-                HStack(spacing: 6) {
-                    Image(systemName: "folder")
-                        .font(.system(size: 12))
-                    Text("Files")
-                        .font(.system(size: 12, weight: .medium))
-                    Spacer()
-                }
-                .padding(.horizontal, 10)
-                .frame(height: 32)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-        }
-        .frame(width: 130)
-        .padding(.vertical, 4)
-        .background(.ultraThinMaterial)
-        .cornerRadius(10)
-        .shadow(color: .black.opacity(0.15), radius: 10, x: 0, y: 4)
-        .overlay(
-            RoundedRectangle(cornerRadius: 10)
-                .stroke(Color.gray.opacity(0.2), lineWidth: 0.5)
-        )
-    }
-}
-
-struct DimmingButtonStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .opacity(configuration.isPressed ? 0.6 : 1.0)
-            .animation(.easeInOut(duration: 0.1), value: configuration.isPressed)
-    }
-}
-
-// MARK: - Fullscreen Player
-
-struct FullscreenPlayerView: View {
-    @Bindable var viewModel: TimelineEditorViewModel
-    @Binding var isPresented: Bool
-
-    @State private var isPlaying: Bool = false
-    @State private var currentTime: Double = 0
-    @State private var duration: Double = 1
-    @State private var isDraggingSlider = false
-    @State private var showControls = true
-    @State private var hideControlsTask: Task<Void, Never>? = nil
-    @State private var timeObserver: Any? = nil
-
-    var body: some View {
-        ZStack {
-            Color.black.ignoresSafeArea()
-
-            AVPlayerView(player: viewModel.player)
-                .ignoresSafeArea()
-                .onTapGesture { toggleControls() }
-
-            if showControls {
-                VStack {
-                    // Top: Close button
-                    HStack {
-                        Spacer()
-                        Button(action: { isPresented = false }) {
-                            Image(systemName: "xmark")
-                                .font(.system(size: 16, weight: .bold))
-                                .foregroundColor(.white)
-                                .padding(10)
-                                .background(.ultraThinMaterial, in: Circle())
-                        }
-                        .padding(.trailing, 20)
-                        .padding(.top, 16)
-                    }
-
-                    Spacer()
-
-                    // Bottom: controls
-                    VStack(spacing: 12) {
-                        // Progress bar
-                        Slider(
-                            value: Binding(
-                                get: { currentTime },
-                                set: { val in
-                                    currentTime = val
-                                    viewModel.scrub(to: val, exact: false)
-                                    resetHideTimer()
-                                }
-                            ),
-                            in: 0...max(duration, 0.01)
-                        )
-                        .tint(.white)
-
-                        // Time labels + Play button
-                        HStack(spacing: 16) {
-                            Text(formatTime(currentTime))
-                                .font(.system(size: 13, weight: .medium, design: .monospaced))
-                                .foregroundColor(.white)
-
-                            Spacer()
-
-                            Button(action: {
-                                viewModel.togglePlayback()
-                                isPlaying = viewModel.isPlaying
-                                resetHideTimer()
-                            }) {
-                                Image(systemName: isPlaying ? "pause.fill" : "play.fill")
-                                    .font(.system(size: 24, weight: .bold))
-                                    .foregroundColor(.white)
-                                    .frame(width: 52, height: 52)
-                                    .background(.ultraThinMaterial, in: Circle())
-                            }
-
-                            Spacer()
-
-                            Text(formatTime(duration))
-                                .font(.system(size: 13, weight: .medium, design: .monospaced))
-                                .foregroundColor(.white.opacity(0.6))
-                        }
-                    }
-                    .padding(.horizontal, 24)
-                    .padding(.bottom, 40)
-                    .background(
-                        LinearGradient(
-                            colors: [.clear, .black.opacity(0.75)],
-                            startPoint: .top,
-                            endPoint: .bottom
-                        )
-                        .frame(height: 180)
-                        .allowsHitTesting(false),
-                        alignment: .bottom
-                    )
-                }
-                .transition(.opacity)
-                .animation(.easeInOut(duration: 0.2), value: showControls)
-            }
-        }
-        .preferredColorScheme(.dark)
-        .onAppear {
-            syncState()
-            startTimeObserver()
-            scheduleHideControls()
-        }
-        .onDisappear {
-            stopTimeObserver()
-            hideControlsTask?.cancel()
-        }
-    }
-
-    private func toggleControls() {
-        withAnimation { showControls.toggle() }
-        if showControls { resetHideTimer() }
-    }
-
-    private func resetHideTimer() {
-        hideControlsTask?.cancel()
-        scheduleHideControls()
-    }
-
-    private func scheduleHideControls() {
-        hideControlsTask = Task {
-            try? await Task.sleep(for: .seconds(3))
-            guard !Task.isCancelled else { return }
-            await MainActor.run {
-                if !isDraggingSlider {
-                    withAnimation { showControls = false }
-                }
-            }
-        }
-    }
-
-    private func syncState() {
-        isPlaying = viewModel.isPlaying
-        currentTime = viewModel.currentTime
-        if let item = viewModel.player.currentItem {
-            let d = item.duration.seconds
-            duration = d.isFinite && d > 0 ? d : viewModel.timeline.totalDuration
-        } else {
-            duration = viewModel.timeline.totalDuration
-        }
-    }
-
-    private func startTimeObserver() {
-        let interval = CMTime(seconds: 1.0 / 30.0, preferredTimescale: 600)
-        timeObserver = viewModel.player.addPeriodicTimeObserver(forInterval: interval, queue: .main) { time in
-            guard !isDraggingSlider else { return }
-            currentTime = time.seconds.isFinite ? time.seconds : 0
-            isPlaying = viewModel.player.rate > 0
-        }
-    }
-
-    private func stopTimeObserver() {
-        if let obs = timeObserver {
-            viewModel.player.removeTimeObserver(obs)
-            timeObserver = nil
-        }
-    }
-
-    private func formatTime(_ t: Double) -> String {
-        guard t.isFinite else { return "00:00" }
-        let m = Int(t) / 60
-        let s = Int(t) % 60
-        return String(format: "%02d:%02d", m, s)
-    }
-}
-

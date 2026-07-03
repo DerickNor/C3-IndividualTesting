@@ -3,19 +3,19 @@ import AVKit
 
 struct AVPlayerView: UIViewRepresentable {
     var player: AVPlayer
+    var videoGravity: AVLayerVideoGravity = .resizeAspect
 
     func makeUIView(context: Context) -> PlayerUIView {
         let view = PlayerUIView()
         view.backgroundColor = .black
         view.playerLayer.player = player
-        // resizeAspect = letterbox/pillarbox: video keeps its own aspect ratio
-        // black bars fill the rest of the canvas — canvas shape stays as selected
-        view.playerLayer.videoGravity = .resizeAspect
+        view.playerLayer.videoGravity = videoGravity
         return view
     }
 
     func updateUIView(_ uiView: PlayerUIView, context: Context) {
         uiView.playerLayer.player = player
+        uiView.playerLayer.videoGravity = videoGravity
     }
 }
 

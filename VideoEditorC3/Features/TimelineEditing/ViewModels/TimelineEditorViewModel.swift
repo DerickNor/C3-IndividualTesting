@@ -34,6 +34,7 @@ class TimelineEditorViewModel {
     // MARK: - UI State
     var zoomLevel: CGFloat = 1.0
     var isShowingVideoPicker: Bool = false
+    var isShowingAudioImporter: Bool = false
     
     // MARK: - Selection & Drag State
     var selectedClipID: UUID? = nil

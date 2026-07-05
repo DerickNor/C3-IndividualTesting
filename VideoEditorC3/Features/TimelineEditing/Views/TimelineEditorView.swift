@@ -61,98 +61,18 @@ struct TimelineEditorView: View {
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarBackButtonHidden(true)
         .toolbar {
-            ToolbarItem(placement: .topBarLeading) {
-                Button(action: {
-                    dismiss()
-                }) {
-                    HStack(spacing: 4) {
-                        Image(systemName: "chevron.backward")
-                            .font(.system(size: 17, weight: .semibold))
+            TimelineToolbar(
+                viewModel: viewModel,
+                selectedTab: $selectedTab,
+                activeTooltip: $activeTooltip,
+                onDismiss: { dismiss() },
+                onSplit: { performSplit() },
+                onDelete: {
+                    if viewModel.selectedClipID != nil {
+                        showDeleteAlert = true
                     }
                 }
-            }
-            
-            ToolbarItem(placement: .topBarTrailing) {
-                Button(action: {
-                    // Export logic placeholder
-                }) {
-                    Image(systemName: "square.and.arrow.up")
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundColor(.white)
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(.blue)
-                .buttonBorderShape(.circle)
-            }
-            
-            ToolbarItemGroup(placement: .bottomBar) {
-                ControlGroup {
-                    Menu {
-                        Button(action: { selectedTab = .ai; withAnimation { activeTooltip = nil } }) {
-                            Label("Auto-Cut", systemImage: "scissors")
-                        }
-                        Button(action: { selectedTab = .ai; withAnimation { activeTooltip = nil } }) {
-                            Label("Auto-Sequence", systemImage: "film")
-                        }
-                        Menu {
-                            Button(action: { selectedTab = .ai; withAnimation { activeTooltip = nil } }) {
-                                Label("Auto Generate", systemImage: "wand.and.stars")
-                            }
-                            Button(action: { selectedTab = .ai; withAnimation { activeTooltip = nil } }) {
-                                Label("Input Script", systemImage: "doc.plaintext")
-                            }
-                        } label: {
-                            Label("Auto-Caption", systemImage: "captions.bubble")
-                        }
-                    } label: {
-                        Label("AI", systemImage: "sparkles")
-                    }
-                    
-                    Menu {
-                        Button(action: {
-                            withAnimation { activeTooltip = nil }
-                            performSplit()
-                        }) {
-                            Label("Split", systemImage: "scissors.badge.ellipsis")
-                        }
-                        Button(action: { selectedTab = .edit; withAnimation { activeTooltip = nil } }) {
-                            Label("Volume", systemImage: "speaker.wave.2.fill")
-                        }
-                    } label: {
-                        Label("Edit", systemImage: "scissors")
-                    }
-                    
-                    Button(action: {
-                        withAnimation { activeTooltip = nil }
-                        selectedTab = .audio
-                    }) {
-                        Label("Audio", systemImage: "waveform")
-                    }
-                    
-                    Menu {
-                        Button(action: { selectedTab = .text; withAnimation { activeTooltip = nil } }) {
-                            Label("Text", systemImage: "textformat")
-                        }
-                        Button(action: { selectedTab = .overlay; withAnimation { activeTooltip = nil } }) {
-                            Label("Overlay", systemImage: "square.on.square")
-                        }
-                        Button(action: { selectedTab = .captions; withAnimation { activeTooltip = nil } }) {
-                            Label("Captions", systemImage: "captions.bubble")
-                        }
-                        Button(role: .destructive, action: {
-                            if viewModel.selectedClipID != nil {
-                                showDeleteAlert = true
-                            }
-                        }) {
-                            Label("Delete", systemImage: "trash")
-                        }
-                    } label: {
-                        Label("More", systemImage: "ellipsis.circle")
-                    }
-                }
-                
-                Spacer()
-            }
+            )
         }
     }
     

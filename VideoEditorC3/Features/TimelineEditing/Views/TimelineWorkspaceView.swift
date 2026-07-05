@@ -9,7 +9,6 @@ struct TimelineWorkspaceView: View {
     @State private var scrollPosition = ScrollPosition(edge: .leading)
     @State private var wasPlayingBeforeScroll = false
     @State private var showingFileImporter = false
-    @State private var showingAudioImporter = false
     @State private var activeAddMenuTrack: TrackType? = nil
     @State private var isFullscreen = false
     
@@ -119,7 +118,6 @@ struct TimelineWorkspaceView: View {
                                             pointsPerSecond: pointsPerSecond,
                                             trackHeight: trackHeight(for: trackType),
                                             showingFileImporter: $showingFileImporter,
-                                            showingAudioImporter: $showingAudioImporter,
                                             activeAddMenuTrack: $activeAddMenuTrack
                                         )
                                     }
@@ -293,7 +291,7 @@ struct TimelineWorkspaceView: View {
                 print("Error selecting video files: \(error.localizedDescription)")
             }
         }
-        .fileImporter(isPresented: $showingAudioImporter, allowedContentTypes: [.audio, .mp3, .wav, .mpeg4Audio], allowsMultipleSelection: true) { result in
+        .fileImporter(isPresented: $viewModel.isShowingAudioImporter, allowedContentTypes: [.audio, .mp3, .wav, .mpeg4Audio], allowsMultipleSelection: true) { result in
             switch result {
             case .success(let urls):
                 viewModel.addAudioClips(fromURLs: urls)

@@ -9,7 +9,6 @@ struct TrackRowView: View {
     let trackHeight: CGFloat
     
     @Binding var showingFileImporter: Bool
-    @Binding var showingAudioImporter: Bool
     @Binding var activeAddMenuTrack: TrackType?
     
     private var trackClips: [Clip] {

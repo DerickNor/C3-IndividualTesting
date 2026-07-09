@@ -35,6 +35,7 @@ class TimelineEditorViewModel {
     var zoomLevel: CGFloat = 1.0
     var isShowingVideoPicker: Bool = false
     var isShowingAudioImporter: Bool = false
+    @ObservationIgnored var pendingAddTrack: Int = 0
     
     // MARK: - Selection & Drag State
     var selectedClipID: UUID? = nil

@@ -8,17 +8,17 @@ extension TimelineEditorViewModel {
     // MARK: - Add Clips
     
     @MainActor
-    func addVideoClip(from item: PhotosPickerItem?) {
+    func addVideoClip(from item: PhotosPickerItem?, targetTrack: Int = 0) {
         guard let item = item else { return }
-        addVideoClips(from: [item])
+        addVideoClips(from: [item], targetTrack: targetTrack)
     }
     
     @MainActor
-    func addVideoClips(from items: [PhotosPickerItem]) {
+    func addVideoClips(from items: [PhotosPickerItem], targetTrack: Int = 0) {
         guard !items.isEmpty else { return }
         
         Task {
-            let targetTrackType = (timeline.clips.map { $0.trackType }.max() ?? -1) + 1
+            let targetTrackType = targetTrack
             var newClips: [Clip] = []
             for item in items {
                 do {
@@ -64,11 +64,11 @@ extension TimelineEditorViewModel {
     }
     
     @MainActor
-    func addVideoClips(fromURLs urls: [URL]) {
+    func addVideoClips(fromURLs urls: [URL], targetTrack: Int = 0) {
         guard !urls.isEmpty else { return }
         
         Task {
-            let targetTrackType = (timeline.clips.map { $0.trackType }.max() ?? -1) + 1
+            let targetTrackType = targetTrack
             var newClips: [Clip] = []
             for url in urls {
                 guard url.startAccessingSecurityScopedResource() else { continue }
@@ -121,7 +121,7 @@ extension TimelineEditorViewModel {
         guard !urls.isEmpty else { return }
         
         Task {
-            let targetTrackType = (timeline.clips.map { $0.trackType }.max() ?? -1) + 1
+            let targetTrackType = 2
             var newClips: [Clip] = []
             for url in urls {
                 guard url.startAccessingSecurityScopedResource() else { continue }
@@ -169,6 +169,32 @@ extension TimelineEditorViewModel {
         }
     }
     
+    @MainActor
+    func addTextClip(text: String = "New Text") {
+        let targetTrackType = 3
+        let duration: TimeInterval = 3.0 // Default 3 seconds
+        
+        let existingMax = timeline.clips.filter { $0.trackType == targetTrackType }.map { $0.startTime + $0.duration }.max() ?? 0
+        let startTime = existingMax
+        
+        let newClip = Clip(
+            id: UUID(),
+            name: text,
+            startTime: startTime,
+            duration: duration,
+            color: .red,
+            trackType: targetTrackType,
+            url: nil,
+            sourceStartTime: 0,
+            assetDuration: duration
+        )
+        
+        self.snapshotForUndo()
+        self.timeline.clips.append(newClip)
+        self.rippleClips(for: targetTrackType)
+        Task { await self.rebuildComposition(); self.save() }
+    }
+    
     // MARK: - Ripple & Move
     
     func rippleClips(for trackType: TrackType) {
@@ -189,26 +215,8 @@ extension TimelineEditorViewModel {
     }
     
     func cleanupEmptyTracks() {
-        let currentTracks = Array(Set(timeline.clips.map { $0.trackType })).sorted()
-        
-        var newTrackMapping: [Int: Int] = [:]
-        var nextAvailableIndex = 1
-        
-        for track in currentTracks {
-            if track == 0 {
-                newTrackMapping[0] = 0
-            } else {
-                newTrackMapping[track] = nextAvailableIndex
-                nextAvailableIndex += 1
-            }
-        }
-        
-        for i in 0..<timeline.clips.count {
-            let oldTrack = timeline.clips[i].trackType
-            if let newTrack = newTrackMapping[oldTrack], newTrack != oldTrack {
-                timeline.clips[i].trackType = newTrack
-            }
-        }
+        // Disabled: We now use fixed track layers (0: Main, 1: Overlay, 2: Audio, 3: Text)
+        // Shifting tracks down would break this structure.
     }
     
     // MARK: - Drag & Trim
@@ -301,6 +309,9 @@ extension TimelineEditorViewModel {
         let rightDuration = original.duration - leftDuration
         let gap: TimeInterval = 0
         
+        let wasPlaying = self.isPlaying
+        self.pause() // Pause to prevent lag during composition rebuild
+        
         snapshotForUndo()
         
         var leftClip = original
@@ -329,12 +340,18 @@ extension TimelineEditorViewModel {
             await self.rebuildComposition()
             self.save()
             self.scrub(to: time, exact: true)
+            if wasPlaying {
+                self.play()
+            }
         }
     }
     
     @MainActor
     func deleteClip(id: UUID) {
         if let index = timeline.clips.firstIndex(where: { $0.id == id }) {
+            let wasPlaying = self.isPlaying
+            self.pause() // Pause to prevent lag during composition rebuild
+            
             self.snapshotForUndo()
             let trackType = timeline.clips[index].trackType
             timeline.clips.remove(at: index)
@@ -344,6 +361,9 @@ extension TimelineEditorViewModel {
             Task {
                 await self.rebuildComposition()
                 self.save()
+                if wasPlaying {
+                    self.play()
+                }
             }
         }
     }

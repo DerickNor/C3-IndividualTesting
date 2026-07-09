@@ -43,7 +43,16 @@ struct TimelineClipView: View {
         let totalTrackHeight = trackHeight + trackSpacing
         
         let trackDelta = Int(round(translationHeight / totalTrackHeight))
-        let targetTrackIndex = max(0, initialTrackIndex + trackDelta)
+        let rawTargetTrackIndex = initialTrackIndex + trackDelta
+        var targetTrackIndex = rawTargetTrackIndex
+        
+        if initialTrackIndex <= 1 {
+            targetTrackIndex = min(max(0, rawTargetTrackIndex), 1)
+        } else if initialTrackIndex == 2 {
+            targetTrackIndex = 2
+        } else if initialTrackIndex == 3 {
+            targetTrackIndex = 3
+        }
         
         if targetTrackIndex != clip.trackType {
             viewModel.moveClip(id: clip.id, toTrack: targetTrackIndex)

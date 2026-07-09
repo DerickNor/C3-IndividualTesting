@@ -84,8 +84,12 @@ struct TimelineToolbar: ToolbarContent {
                 }
                 
                 Menu {
-                    Button(action: { selectedTab = .text; withAnimation { activeTooltip = nil } }) {
-                        Label("Text", systemImage: "textformat")
+                    Button(action: { 
+                        selectedTab = .text
+                        withAnimation { activeTooltip = nil }
+                        viewModel.addTextClip()
+                    }) {
+                        Label("Add Text", systemImage: "plus.circle")
                     }
                     Button(action: { selectedTab = .overlay; withAnimation { activeTooltip = nil } }) {
                         Label("Overlay", systemImage: "square.on.square")

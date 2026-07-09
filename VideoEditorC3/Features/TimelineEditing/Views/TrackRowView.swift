@@ -99,10 +99,12 @@ struct TrackRowView: View {
                             TinyAddMenu(
                                 actionPhoto: {
                                     activeAddMenuTrack = nil
+                                    viewModel.pendingAddTrack = trackType
                                     viewModel.isShowingVideoPicker = true
                                 },
                                 actionFiles: {
                                     activeAddMenuTrack = nil
+                                    viewModel.pendingAddTrack = trackType
                                     showingFileImporter = true
                                 }
                             )

@@ -1,7 +1,11 @@
 import SwiftUI
 import PhotosUI
 
-struct TimelineWorkspaceView: View {
+struct TimelineWorkspaceView: View, Equatable {
+    static func == (lhs: TimelineWorkspaceView, rhs: TimelineWorkspaceView) -> Bool {
+        return lhs.viewModel === rhs.viewModel && lhs.pointsPerSecond == rhs.pointsPerSecond
+    }
+    
     @Bindable var viewModel: TimelineEditorViewModel
     let pointsPerSecond: CGFloat
     
@@ -215,12 +219,14 @@ struct TimelineWorkspaceView: View {
                                         if activeAddMenuTrack == trackType {
                                             TinyAddMenu(
                                                 actionPhoto: {
-                                                    activeAddMenuTrack = nil
+                                                    viewModel.pendingAddTrack = trackType
                                                     viewModel.isShowingVideoPicker = true
+                                                    activeAddMenuTrack = nil
                                                 },
                                                 actionFiles: {
-                                                    activeAddMenuTrack = nil
+                                                    viewModel.pendingAddTrack = trackType
                                                     showingFileImporter = true
+                                                    activeAddMenuTrack = nil
                                                 }
                                             )
                                             .offset(x: -140) // Place directly left of the + button
@@ -280,13 +286,13 @@ struct TimelineWorkspaceView: View {
         .photosPicker(isPresented: $viewModel.isShowingVideoPicker, selection: $selectedVideoItems, matching: .videos)
         .onChange(of: selectedVideoItems) { _, newItems in
             guard !newItems.isEmpty else { return }
-            viewModel.addVideoClips(from: newItems)
+            viewModel.addVideoClips(from: newItems, targetTrack: viewModel.pendingAddTrack)
             selectedVideoItems = [] // Reset for next selection
         }
         .fileImporter(isPresented: $showingFileImporter, allowedContentTypes: [.movie, .video, .mpeg4Movie, .quickTimeMovie], allowsMultipleSelection: true) { result in
             switch result {
             case .success(let urls):
-                viewModel.addVideoClips(fromURLs: urls)
+                viewModel.addVideoClips(fromURLs: urls, targetTrack: viewModel.pendingAddTrack)
             case .failure(let error):
                 print("Error selecting video files: \(error.localizedDescription)")
             }
@@ -329,8 +335,9 @@ struct TimelineWorkspaceView: View {
     func yOffset(for type: TrackType) -> CGFloat {
         let spacing: CGFloat = 4
         var offset: CGFloat = 0
-        for i in 0..<type {
-            offset += trackHeight(for: i) + spacing
+        for track in viewModel.availableTracks {
+            if track >= type { break }
+            offset += trackHeight(for: track) + spacing
         }
         return offset
     }

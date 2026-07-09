@@ -27,6 +27,7 @@ struct TimelineEditorView: View {
             VStack(spacing: 0) {
                 // Single workspace view that never gets destroyed
                 TimelineWorkspaceView(viewModel: viewModel, pointsPerSecond: pointsPerSecond)
+                    .equatable()
                 
             }
             .simultaneousGesture(
@@ -69,6 +70,7 @@ struct TimelineEditorView: View {
                 onSplit: { performSplit() },
                 onDelete: {
                     if viewModel.selectedClipID != nil {
+                        viewModel.pause() // Pause player to free up main thread
                         showDeleteAlert = true
                     }
                 }
